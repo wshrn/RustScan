@@ -50,7 +50,7 @@ pub fn parse_addresses(input: &Opts) -> Vec<IpAddr> {
 
         if !file_path.is_file() {
             warning!(
-                format!("Host {file_path:?} could not be resolved."),
+                format!("主机 {file_path:?} 无法解析。"),
                 input.greppable,
                 input.accessible
             );
@@ -62,7 +62,7 @@ pub fn parse_addresses(input: &Opts) -> Vec<IpAddr> {
             ips.extend(x);
         } else {
             warning!(
-                format!("Host {file_path:?} could not be resolved."),
+                format!("主机 {file_path:?} 无法解析。"),
                 input.greppable,
                 input.accessible
             );

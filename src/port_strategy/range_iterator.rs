@@ -64,7 +64,7 @@ impl Iterator for RangeIterator {
         Some(
             (self.actual_start + current_pick)
                 .try_into()
-                .expect("Could not convert u32 to u16"),
+                .expect("无法将 u32 转换为 u16"),
         )
     }
 }

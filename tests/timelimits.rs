@@ -53,7 +53,7 @@ mod timelimits {
     #[ignore]
     fn scan_localhost() {
         let timeout = super::Duration::from_secs(25);
-        super::run_rustscan_with_timeout(&["--greppable", "--no-nmap", "127.0.0.1"], timeout);
+        super::run_rustscan_with_timeout(&["--greppable", "127.0.0.1"], timeout);
     }
 
     #[test]
@@ -62,7 +62,6 @@ mod timelimits {
         super::run_rustscan_with_timeout(
             &[
                 "--greppable",
-                "--no-nmap",
                 "-u",
                 "5000",
                 "-b",
@@ -79,7 +78,6 @@ mod timelimits {
         super::run_rustscan_with_timeout(
             &[
                 "--greppable",
-                "--no-nmap",
                 "-u",
                 "5000",
                 "-b",
@@ -96,7 +94,6 @@ mod timelimits {
         super::run_rustscan_with_timeout(
             &[
                 "--greppable",
-                "--no-nmap",
                 "-u",
                 "5000",
                 "-b",
