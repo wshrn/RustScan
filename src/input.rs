@@ -32,7 +32,7 @@ fn parse_range(input: &str) -> Result<PortRange, String> {
 
     if range.is_err() {
         return Err(String::from(
-            "the range format must be 'start-end'. Example: 1-1000.",
+            "端口范围格式必须为 '起始-结束'，例如：1-1000。",
         ));
     }
 
@@ -42,7 +42,7 @@ fn parse_range(input: &str) -> Result<PortRange, String> {
             end: *end,
         }),
         _ => Err(String::from(
-            "the range format must be 'start-end'. Example: 1-1000.",
+            "端口范围格式必须为 '起始-结束'，例如：1-1000。",
         )),
     }
 }
@@ -52,90 +52,84 @@ fn parse_range(input: &str) -> Result<PortRange, String> {
     name = "rustscan",
     version = env!("CARGO_PKG_VERSION"),
     max_term_width = 120,
-    help_template = "{bin} {version}\n{about}\n\nUSAGE:\n    {usage}\n\nOPTIONS:\n{options}",
+    help_template = "{bin} {version}\n{about}\n\n用法:\n    {usage}\n\n选项:\n{options}",
 )]
 #[allow(clippy::struct_excessive_bools)]
-/// Fast Port Scanner built in Rust.
-/// WARNING Do not use this program against sensitive infrastructure since the
-/// specified server may not be able to handle this many socket connections at once.
+/// 高速端口扫描器，采用 Rust 构建。
+/// 警告：请勿对敏感基础设施使用本程序，目标服务器可能无法承受大量并发套接字。
 /// - Discord  <http://discord.skerritt.blog>
 /// - GitHub <https://github.com/RustScan/RustScan>
 pub struct Opts {
-    /// A comma-delimited list or newline-delimited file of separated CIDRs, IPs, or hosts to be scanned.
+    /// 待扫描的 CIDR、IP 或主机，使用英文逗号分隔，或提供逐行的文件路径。
     #[arg(short, long, value_delimiter = ',')]
     pub addresses: Vec<String>,
 
-    /// A list of comma separated ports to be scanned. Example: 80,443,8080.
+    /// 以英文逗号分隔的端口列表，例如：80,443,8080。
     #[arg(short, long, value_delimiter = ',')]
     pub ports: Option<Vec<u16>>,
 
-    /// A range of ports with format start-end. Example: 1-1000.
+    /// 端口范围，格式为 起始-结束，例如：1-1000。
     #[arg(short, long, conflicts_with = "ports", value_parser = parse_range)]
     pub range: Option<PortRange>,
 
-    /// Whether to ignore the configuration file or not.
+    /// 是否忽略配置文件。
     #[arg(short, long)]
     pub no_config: bool,
 
-    /// Hide the banner
+    /// 隐藏启动横幅。
     #[arg(long)]
     pub no_banner: bool,
 
-    /// Custom path to config file
+    /// 指定配置文件路径。
     #[arg(short, long, value_parser)]
     pub config_path: Option<PathBuf>,
 
-    /// Greppable mode. Only output the ports. No Nmap. Useful for grep or outputting to a file.
+    /// Grep 模式：仅输出端口，方便重定向或 grep 处理。
     #[arg(short, long)]
     pub greppable: bool,
 
-    /// Accessible mode. Turns off features which negatively affect screen readers.
+    /// 无障碍模式：关闭对屏幕阅读器不友好的效果。
     #[arg(long)]
     pub accessible: bool,
 
-    /// A comma-delimited list or file of DNS resolvers.
+    /// DNS 解析器，支持逗号分隔列表或文件路径。
     #[arg(long)]
     pub resolver: Option<String>,
 
-    /// The batch size for port scanning, it increases or slows the speed of
-    /// scanning. Depends on the open file limit of your OS.  If you do 65535
-    /// it will do every port at the same time. Although, your OS may not
-    /// support this.
+    /// 端口扫描批量大小，决定一次同时扫描的端口数量，受系统文件句柄上限影响。
+    /// 若设置为 65535 将同时扫描所有端口，但操作系统可能无法支持。
     #[arg(short, long, default_value = "4500")]
     pub batch_size: u16,
 
-    /// The timeout in milliseconds before a port is assumed to be closed.
+    /// 端口判定为关闭前的超时时长（毫秒）。
     #[arg(short, long, default_value = "1500")]
     pub timeout: u32,
 
-    /// The number of tries before a port is assumed to be closed.
-    /// If set to 0, rustscan will correct it to 1.
+    /// 端口被视为关闭前的重试次数，若设为 0 将自动调整为 1。
     #[arg(long, default_value = "1")]
     pub tries: u8,
 
-    /// Automatically ups the ULIMIT with the value you provided.
+    /// 将系统 ulimit 调整为提供的数值。
     #[arg(short, long)]
     pub ulimit: Option<u64>,
 
-    /// The order of scanning to be performed. The "serial" option will
-    /// scan ports in ascending order while the "random" option will scan
-    /// ports randomly.
+    /// 扫描顺序：serial 顺序扫描，random 随机扫描。
     #[arg(long, value_enum, ignore_case = true, default_value = "serial")]
     pub scan_order: ScanOrder,
 
-    /// Use the top 1000 ports.
+    /// 是否使用预设的前 1000 个常见端口。
     #[arg(long)]
     pub top: bool,
 
-    /// A list of comma separated ports to be excluded from scanning. Example: 80,443,8080.
+    /// 需要排除的端口列表（英文逗号分隔），例如：80,443,8080。
     #[arg(short, long, value_delimiter = ',')]
     pub exclude_ports: Option<Vec<u16>>,
 
-    /// A list of comma separated CIDRs, IPs, or hosts to be excluded from scanning.
+    /// 需要排除的 CIDR、IP 或主机列表（英文逗号分隔）。
     #[arg(short = 'x', long = "exclude-addresses", value_delimiter = ',')]
     pub exclude_addresses: Option<Vec<String>>,
 
-    /// UDP scanning mode, finds UDP ports that send back responses
+    /// 启用 UDP 扫描模式，发现会响应的 UDP 端口。
     #[arg(long)]
     pub udp: bool,
 }
@@ -155,8 +149,7 @@ impl Opts {
         opts
     }
 
-    /// Reads the command line arguments into an Opts struct and merge
-    /// values found within the user configuration file.
+    /// 读取命令行参数并合并配置文件中的设置。
     pub fn merge(&mut self, config: &Config) {
         if !self.no_config {
             self.merge_required(config);
@@ -276,7 +269,7 @@ impl Config {
         let config: Config = match toml::from_str(&content) {
             Ok(config) => config,
             Err(e) => {
-                println!("Found {e} in configuration file.\nAborting scan.\n");
+                println!("在配置文件中发现错误 {e}。\n已终止扫描。\n");
                 std::process::exit(1);
             }
         };
@@ -288,7 +281,7 @@ impl Config {
 /// Constructs default path to config toml
 pub fn default_config_path() -> PathBuf {
     let Some(mut config_path) = dirs::home_dir() else {
-        panic!("Could not infer config file path.");
+        panic!("无法确定配置文件路径。");
     };
     config_path.push(".rustscan.toml");
     config_path

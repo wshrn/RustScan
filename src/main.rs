@@ -39,7 +39,7 @@ fn main() {
 
     env_logger::init();
     let mut benchmarks = Benchmark::init();
-    let mut rustscan_bench = NamedTimer::start("RustScan");
+    let mut rustscan_bench = NamedTimer::start("RustScan主流程");
 
     let mut opts: Opts = Opts::read();
     let config = Config::read(opts.config_path.clone());
@@ -55,7 +55,7 @@ fn main() {
 
     if ips.is_empty() {
         warning!(
-            "No IPs could be resolved, aborting scan.",
+            "未能解析任何 IP，扫描已终止。",
             opts.greppable,
             opts.accessible
         );
@@ -81,7 +81,7 @@ fn main() {
     );
     debug!("Scanner finished building: {scanner:?}");
 
-    let mut portscan_bench = NamedTimer::start("Portscan");
+    let mut portscan_bench = NamedTimer::start("端口扫描");
     let scan_result = block_on(scanner.run());
     portscan_bench.end();
     benchmarks.push(portscan_bench);
@@ -103,16 +103,16 @@ fn main() {
         // If we got here it means the IP was not found within the HashMap, this
         // means the scan couldn't find any open ports for it.
 
-        let x = format!("Looks like I didn't find any open ports for {:?}. This is usually caused by a high batch size.
-        \n*I used {} batch size, consider lowering it with {} or a comfortable number for your system.
-        \n Alternatively, increase the timeout if your ping is high. Rustscan -t 2000 for 2000 milliseconds (2s) timeout.\n",
-        ip,
-        opts.batch_size,
-        "'rustscan -b <batch_size> -a <ip address>'");
+        let x = format!(
+            "未能在 {:?} 上发现开放端口，这通常是批量大小过大的结果。
+        \n* 当前批量大小为 {}，请使用 {} 或根据系统情况调小。
+        \n 如果网络时延较高，也可以通过 'rustscan -t 2000' 将超时时间提升到 2000 毫秒（2 秒）。\n",
+            ip, opts.batch_size, "'rustscan -b <批量大小> -a <IP 地址>'"
+        );
         warning!(x, opts.greppable, opts.accessible);
     }
 
-    let mut reporting_bench = NamedTimer::start("Results");
+    let mut reporting_bench = NamedTimer::start("结果汇总");
     for (ip, ports) in &ports_per_ip {
         let vec_str_ports: Vec<String> = ports.iter().map(ToString::to_string).collect();
 
@@ -124,7 +124,7 @@ fn main() {
             continue;
         }
 
-        let message = format!("Open ports for {ip}: [{ports_str}]");
+        let message = format!("{ip} 的开放端口: [{ports_str}]");
         detail!(message, opts.greppable, opts.accessible);
     }
 
@@ -145,12 +145,12 @@ fn print_opening(opts: &Opts) {
 | {}  }| { } |{ {__ {_   _}{ {__  /  ___} / {} \ |  `| |
 | .-. \| {_} |.-._} } | |  .-._} }\     }/  /\  \| |\  |
 `-' `-'`-----'`----'  `-'  `----'  `---' `-'  `-'`-' `-'
-The Modern Day Port Scanner."#;
+现代化的端口扫描器"#;
 
     println!("{}", s.gradient(Color::Green).bold());
     let info = r#"________________________________________
-: http://discord.skerritt.blog         :
-: https://github.com/RustScan/RustScan :
+: 官方交流：http://discord.skerritt.blog         :
+: 项目主页：https://github.com/RustScan/RustScan :
  --------------------------------------"#;
     println!("{}", info.gradient(Color::Yellow).bold());
     funny_opening!();
@@ -161,7 +161,7 @@ The Modern Day Port Scanner."#;
         .unwrap_or_else(input::default_config_path);
 
     detail!(
-        format!("The config file is expected to be at {config_path:?}"),
+        format!("配置文件默认位于 {config_path:?}"),
         opts.greppable,
         opts.accessible
     );
@@ -174,16 +174,12 @@ fn adjust_ulimit_size(opts: &Opts) -> u64 {
     if let Some(limit) = opts.ulimit {
         if Resource::NOFILE.set(limit, limit).is_ok() {
             detail!(
-                format!("Automatically increasing ulimit value to {limit}."),
+                format!("已自动将 ulimit 调整为 {limit}。"),
                 opts.greppable,
                 opts.accessible
             );
         } else {
-            warning!(
-                "ERROR. Failed to set ulimit value.",
-                opts.greppable,
-                opts.accessible
-            );
+            warning!("错误：无法设置 ulimit。", opts.greppable, opts.accessible);
         }
     }
 
@@ -199,8 +195,10 @@ fn infer_batch_size(opts: &Opts, ulimit: u64) -> u16 {
 
     // Adjust the batch size when the ulimit value is lower than the desired batch size
     if ulimit < batch_size {
-        warning!("File limit is lower than default batch size. Consider upping with --ulimit. May cause harm to sensitive servers",
-            opts.greppable, opts.accessible
+        warning!(
+            "文件句柄上限低于默认批量大小，请使用 --ulimit 提升限制。否则可能影响敏感服务器。",
+            opts.greppable,
+            opts.accessible
         );
 
         // When the OS supports high file limits like 8000, but the user
@@ -210,11 +208,11 @@ fn infer_batch_size(opts: &Opts, ulimit: u64) -> u16 {
             // ulimit is smaller than aveage batch size
             // user must have very small ulimit
             // decrease batch size to half of ulimit
-            warning!("Your file limit is very small, which negatively impacts RustScan's speed. Use the Docker image, or up the Ulimit with '--ulimit 5000'. ", opts.greppable, opts.accessible);
-            info!("Halving batch_size because ulimit is smaller than average batch size");
+            warning!("当前文件句柄上限过小，会显著降低 RustScan 的速度。请改用 Docker 镜像，或执行 '--ulimit 5000' 提升限制。 ", opts.greppable, opts.accessible);
+            info!("由于 ulimit 低于推荐值，批量大小已减半");
             batch_size = ulimit / 2;
         } else if ulimit > DEFAULT_FILE_DESCRIPTORS_LIMIT {
-            info!("Batch size is now average batch size");
+            info!("批量大小已调整为推荐值");
             batch_size = AVERAGE_BATCH_SIZE.into();
         } else {
             batch_size = ulimit - 100;
@@ -223,13 +221,17 @@ fn infer_batch_size(opts: &Opts, ulimit: u64) -> u16 {
     // When the ulimit is higher than the batch size let the user know that the
     // batch size can be increased unless they specified the ulimit themselves.
     else if ulimit + 2 > batch_size && (opts.ulimit.is_none()) {
-        detail!(format!("File limit higher than batch size. Can increase speed by increasing batch size '-b {}'.", ulimit - 100),
-        opts.greppable, opts.accessible);
+        detail!(
+            format!(
+                "文件句柄上限高于当前批量大小，可通过 '-b {}' 提升扫描速度。",
+                ulimit - 100
+            ),
+            opts.greppable,
+            opts.accessible
+        );
     }
 
-    batch_size
-        .try_into()
-        .expect("Couldn't fit the batch size into a u16.")
+    batch_size.try_into().expect("批量大小无法转换为 u16。")
 }
 
 #[cfg(test)]

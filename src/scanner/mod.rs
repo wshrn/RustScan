@@ -288,7 +288,7 @@ impl Scanner {
                 }
             }
             Err(e) => {
-                println!("Err E binding sock {e:?}");
+                println!("绑定套接字时出错 {e:?}");
                 Err(e)
             }
         }
@@ -298,9 +298,9 @@ impl Scanner {
     fn fmt_ports(&self, socket: SocketAddr) {
         if !self.greppable {
             if self.accessible {
-                println!("Open {socket}");
+                println!("发现开放端口 {socket}");
             } else {
-                println!("Open {}", socket.to_string().purple());
+                println!("发现开放端口 {}", socket.to_string().purple());
             }
         }
     }

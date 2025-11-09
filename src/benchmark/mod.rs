@@ -39,7 +39,7 @@ impl Benchmark {
     /// a single String with all the available information
     /// for easy printing
     pub fn summary(&self) -> String {
-        let mut summary = String::from("\nRustScan Benchmark Summary");
+        let mut summary = String::from("\nRustScan 运行时间汇总");
 
         for timer in &self.named_timers {
             if timer.start.is_some() && timer.end.is_some() {
@@ -89,6 +89,6 @@ fn benchmark() {
     benchmarks.push(NamedTimer::start("only_start"));
     assert!(benchmarks
         .summary()
-        .contains("\nRustScan Benchmark Summary\ntest       | 0."));
+        .contains("\nRustScan 运行时间汇总\ntest       | 0."));
     assert!(!benchmarks.summary().contains("only_start"));
 }
