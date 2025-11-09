@@ -145,11 +145,6 @@ fn print_opening() {
 现代化的端口扫描器"#;
 
     println!("{}", s.gradient(Color::Green).bold());
-    let info = r#"________________________________________
-: 官方交流：http://discord.skerritt.blog         :
-: 项目主页：https://github.com/RustScan/RustScan :
- --------------------------------------"#;
-    println!("{}", info.gradient(Color::Yellow).bold());
     funny_opening!();
 }
 

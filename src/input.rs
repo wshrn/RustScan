@@ -54,8 +54,6 @@ fn parse_range(input: &str) -> Result<PortRange, String> {
 #[allow(clippy::struct_excessive_bools)]
 /// 高速端口扫描器，采用 Rust 构建。
 /// 警告：请勿对敏感基础设施使用本程序，目标服务器可能无法承受大量并发套接字。
-/// - Discord  <http://discord.skerritt.blog>
-/// - GitHub <https://github.com/RustScan/RustScan>
 pub struct Opts {
     /// 待扫描的 CIDR、IP 或主机，使用英文逗号分隔，或提供逐行的文件路径。
     #[arg(short, long, value_delimiter = ',')]

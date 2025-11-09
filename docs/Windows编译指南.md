@@ -16,9 +16,9 @@
    ```
 
 ## 2. 获取源码
+将项目源码解压或同步到本地目录（例如 `C:\RustScan`），并进入该目录：
 ```powershell
-git clone https://github.com/RustScan/RustScan.git
-cd RustScan
+Set-Location C:\RustScan
 ```
 
 ## 3. 编译项目
