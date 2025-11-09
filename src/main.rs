@@ -3,7 +3,7 @@
 #![allow(clippy::doc_markdown, clippy::if_not_else, clippy::non_ascii_literal)]
 
 use rustscan::benchmark::{Benchmark, NamedTimer};
-use rustscan::input::{self, Config, Opts};
+use rustscan::input::Opts;
 use rustscan::port_strategy::PortStrategy;
 use rustscan::scanner::Scanner;
 use rustscan::{detail, funny_opening, warning};
@@ -18,7 +18,6 @@ use std::time::Duration;
 use rustscan::address::parse_addresses;
 
 extern crate colorful;
-extern crate dirs;
 
 // Average value for Ubuntu
 #[cfg(unix)]
@@ -41,14 +40,12 @@ fn main() {
     let mut benchmarks = Benchmark::init();
     let mut rustscan_bench = NamedTimer::start("RustScan主流程");
 
-    let mut opts: Opts = Opts::read();
-    let config = Config::read(opts.config_path.clone());
-    opts.merge(&config);
+    let opts: Opts = Opts::read();
 
     debug!("Main() `opts` arguments are {opts:?}");
 
     if !opts.greppable && !opts.accessible && !opts.no_banner {
-        print_opening(&opts);
+        print_opening();
     }
 
     let ips: Vec<IpAddr> = parse_addresses(&opts);
@@ -139,7 +136,7 @@ fn main() {
 
 /// Prints the opening title of RustScan
 #[allow(clippy::items_after_statements, clippy::needless_raw_string_hashes)]
-fn print_opening(opts: &Opts) {
+fn print_opening() {
     debug!("Printing opening");
     let s = r#".----. .-. .-. .----..---.  .----. .---.   .--.  .-. .-.
 | {}  }| { } |{ {__ {_   _}{ {__  /  ___} / {} \ |  `| |
@@ -154,17 +151,6 @@ fn print_opening(opts: &Opts) {
  --------------------------------------"#;
     println!("{}", info.gradient(Color::Yellow).bold());
     funny_opening!();
-
-    let config_path = opts
-        .config_path
-        .clone()
-        .unwrap_or_else(input::default_config_path);
-
-    detail!(
-        format!("配置文件默认位于 {config_path:?}"),
-        opts.greppable,
-        opts.accessible
-    );
 }
 
 #[cfg(unix)]
@@ -306,11 +292,7 @@ mod tests {
 
     #[test]
     fn test_print_opening_no_panic() {
-        let opts = Opts {
-            ulimit: Some(2_000),
-            ..Default::default()
-        };
         // print opening should not panic
-        print_opening(&opts);
+        print_opening();
     }
 }
