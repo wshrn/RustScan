@@ -3,11 +3,10 @@
 #![allow(clippy::doc_markdown, clippy::if_not_else, clippy::non_ascii_literal)]
 
 use rustscan::benchmark::{Benchmark, NamedTimer};
-use rustscan::input::{self, Config, Opts, ScriptsRequired};
+use rustscan::input::{self, Config, Opts};
 use rustscan::port_strategy::PortStrategy;
 use rustscan::scanner::Scanner;
-use rustscan::scripts::{init_scripts, Script, ScriptFile};
-use rustscan::{detail, funny_opening, output, warning};
+use rustscan::{detail, funny_opening, warning};
 
 use colorful::{Color, Colorful};
 use futures::executor::block_on;
@@ -47,20 +46,6 @@ fn main() {
     opts.merge(&config);
 
     debug!("Main() `opts` arguments are {opts:?}");
-
-    let scripts_to_run: Vec<ScriptFile> = match init_scripts(&opts.scripts) {
-        Ok(scripts_to_run) => scripts_to_run,
-        Err(e) => {
-            warning!(
-                format!("Initiating scripts failed!\n{e}"),
-                opts.greppable,
-                opts.accessible
-            );
-            std::process::exit(1);
-        }
-    };
-
-    debug!("Scripts initialized {:?}", &scripts_to_run);
 
     if !opts.greppable && !opts.accessible && !opts.no_banner {
         print_opening(&opts);
@@ -127,64 +112,25 @@ fn main() {
         warning!(x, opts.greppable, opts.accessible);
     }
 
-    let mut script_bench = NamedTimer::start("Scripts");
+    let mut reporting_bench = NamedTimer::start("Results");
     for (ip, ports) in &ports_per_ip {
         let vec_str_ports: Vec<String> = ports.iter().map(ToString::to_string).collect();
 
-        // nmap port style is 80,443. Comma separated with no spaces.
+        // Ports are printed as 80,443 (comma separated without spaces).
         let ports_str = vec_str_ports.join(",");
 
-        // if option scripts is none, no script will be spawned
-        if opts.greppable || opts.scripts == ScriptsRequired::None {
+        if opts.greppable {
             println!("{} -> [{}]", &ip, ports_str);
             continue;
         }
-        detail!("Starting Script(s)", opts.greppable, opts.accessible);
 
-        // Run all the scripts we found and parsed based on the script config file tags field.
-        for mut script_f in scripts_to_run.clone() {
-            // This part allows us to add commandline arguments to the Script call_format, appending them to the end of the command.
-            if !opts.command.is_empty() {
-                let user_extra_args = &opts.command.join(" ");
-                debug!("Extra args vec {user_extra_args:?}");
-                if script_f.call_format.is_some() {
-                    let mut call_f = script_f.call_format.unwrap();
-                    call_f.push(' ');
-                    call_f.push_str(user_extra_args);
-                    output!(
-                        format!("Running script {:?} on ip {}\nDepending on the complexity of the script, results may take some time to appear.", call_f, &ip),
-                        opts.greppable,
-                        opts.accessible
-                    );
-                    debug!("Call format {call_f}");
-                    script_f.call_format = Some(call_f);
-                }
-            }
-
-            // Building the script with the arguments from the ScriptFile, and ip-ports.
-            let script = Script::build(
-                script_f.path,
-                *ip,
-                ports.clone(),
-                script_f.port,
-                script_f.ports_separator,
-                script_f.tags,
-                script_f.call_format,
-            );
-            match script.run() {
-                Ok(script_result) => {
-                    detail!(script_result.to_string(), opts.greppable, opts.accessible);
-                }
-                Err(e) => {
-                    warning!(&format!("Error {e}"), opts.greppable, opts.accessible);
-                }
-            }
-        }
+        let message = format!("Open ports for {ip}: [{ports_str}]");
+        detail!(message, opts.greppable, opts.accessible);
     }
 
     // To use the runtime benchmark, run the process as: RUST_LOG=info ./rustscan
-    script_bench.end();
-    benchmarks.push(script_bench);
+    reporting_bench.end();
+    benchmarks.push(reporting_bench);
     rustscan_bench.end();
     benchmarks.push(rustscan_bench);
     debug!("Benchmarks raw {benchmarks:?}");

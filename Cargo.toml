@@ -3,11 +3,11 @@ name = "rustscan"
 version = "2.4.1"
 authors = ["Autumn <autumn@skerritt.blog>"]
 edition = "2018"
-description = "Faster Nmap Scanning with Rust"
+description = "Fast port scanner written in Rust"
 homepage = "https://github.com/rustscan/rustscan"
 repository = "https://github.com/rustscan/rustscan"
 license = "GPL-3.0-only"
-keywords = ["port", "scanning", "nmap"]
+keywords = ["port", "scanning", "network"]
 categories = ["command-line-utilities"]
 readme = "README.md"
 exclude = [
@@ -36,17 +36,14 @@ serde_derive = "1.0.116"
 cidr-utils = "0.6.1"
 itertools = "0.14.0"
 hickory-resolver = { version = "0.24.3", features = ["dns-over-rustls"] }
-anyhow = "1.0.40"
-text_placeholder = { version = "0.5", features = ["struct_context"] }
 once_cell = "1.21.3"
 
 [dev-dependencies]
-parameterized = "2.0.0"
 wait-timeout = "0.2"
 criterion = { version = "0.7", features = ["html_reports"] }
 
 [package.metadata.deb]
-depends = "$auto, nmap"
+depends = "$auto"
 section = "rust"
 
 [profile.release]

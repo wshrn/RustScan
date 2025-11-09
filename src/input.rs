@@ -16,17 +16,6 @@ pub enum ScanOrder {
     Random,
 }
 
-/// Represents the scripts variant.
-///   - none will avoid running any script, only portscan results will be shown.
-///   - default will run the default embedded nmap script, that's part of RustScan since the beginning.
-///   - custom will read the ScriptConfig file and the available scripts in the predefined folders
-#[derive(Deserialize, Debug, ValueEnum, Clone, PartialEq, Eq, Copy)]
-pub enum ScriptsRequired {
-    None,
-    Default,
-    Custom,
-}
-
 /// Represents the range of ports to be scanned.
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct PortRange {
@@ -134,21 +123,9 @@ pub struct Opts {
     #[arg(long, value_enum, ignore_case = true, default_value = "serial")]
     pub scan_order: ScanOrder,
 
-    /// Level of scripting required for the run.
-    #[arg(long, value_enum, ignore_case = true, default_value = "default")]
-    pub scripts: ScriptsRequired,
-
     /// Use the top 1000 ports.
     #[arg(long)]
     pub top: bool,
-
-    /// The Script arguments to run.
-    /// To use the argument -A, end RustScan's args with '-- -A'.
-    /// Example: 'rustscan -t 1500 -a 127.0.0.1 -- -A -sC'.
-    /// This command adds -Pn -vvv -p $PORTS automatically to nmap.
-    /// For things like --script '(safe and vuln)' enclose it in quotations marks \"'(safe and vuln)'\"
-    #[arg(last = true)]
-    pub command: Vec<String>,
 
     /// A list of comma separated ports to be excluded from scanning. Example: 80,443,8080.
     #[arg(short, long, value_delimiter = ',')]
@@ -199,8 +176,7 @@ impl Opts {
         }
 
         merge_required!(
-            addresses, greppable, accessible, batch_size, timeout, tries, scan_order, scripts,
-            command, udp
+            addresses, greppable, accessible, batch_size, timeout, tries, scan_order, udp
         );
     }
 
@@ -235,14 +211,12 @@ impl Default for Opts {
             timeout: 0,
             tries: 0,
             ulimit: None,
-            command: vec![],
             accessible: false,
             resolver: None,
             scan_order: ScanOrder::Serial,
             no_config: true,
             no_banner: false,
             top: false,
-            scripts: ScriptsRequired::Default,
             config_path: None,
             exclude_ports: None,
             exclude_addresses: None,
@@ -268,8 +242,6 @@ pub struct Config {
     ulimit: Option<u64>,
     resolver: Option<String>,
     scan_order: Option<ScanOrder>,
-    command: Option<Vec<String>>,
-    scripts: Option<ScriptsRequired>,
     exclude_ports: Option<Vec<u16>>,
     exclude_addresses: Option<Vec<String>>,
     udp: Option<bool>,
@@ -324,10 +296,8 @@ pub fn default_config_path() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use clap::{CommandFactory, Parser};
-    use parameterized::parameterized;
-
-    use super::{Config, Opts, PortRange, ScanOrder, ScriptsRequired};
+    use super::{Config, Opts, PortRange, ScanOrder};
+    use clap::CommandFactory;
 
     impl Config {
         fn default() -> Self {
@@ -340,11 +310,9 @@ mod tests {
                 timeout: Some(1_000),
                 tries: Some(1),
                 ulimit: None,
-                command: Some(vec!["-A".to_owned()]),
                 accessible: Some(true),
                 resolver: None,
                 scan_order: Some(ScanOrder::Random),
-                scripts: None,
                 exclude_ports: None,
                 exclude_addresses: None,
                 udp: Some(false),
@@ -355,26 +323,6 @@ mod tests {
     #[test]
     fn verify_cli() {
         Opts::command().debug_assert();
-    }
-
-    #[parameterized(input = {
-        vec!["rustscan", "--addresses", "127.0.0.1"],
-        vec!["rustscan", "--addresses", "127.0.0.1", "--", "-sCV"],
-        vec!["rustscan", "--addresses", "127.0.0.1", "--", "-A"],
-        vec!["rustscan", "-t", "1500", "-a", "127.0.0.1", "--", "-A", "-sC"],
-        vec!["rustscan", "--addresses", "127.0.0.1", "--", "--script", r#""'(safe and vuln)'""#],
-    }, command = {
-        vec![],
-        vec!["-sCV".to_owned()],
-        vec!["-A".to_owned()],
-        vec!["-A".to_owned(), "-sC".to_owned()],
-        vec!["--script".to_owned(), "\"'(safe and vuln)'\"".to_owned()],
-    })]
-    fn parse_trailing_command(input: Vec<&str>, command: Vec<String>) {
-        let opts = Opts::parse_from(input);
-
-        assert_eq!(vec!["127.0.0.1".to_owned()], opts.addresses);
-        assert_eq!(command, opts.command);
     }
 
     #[test]
@@ -388,7 +336,6 @@ mod tests {
         assert!(opts.greppable);
         assert!(!opts.accessible);
         assert_eq!(opts.timeout, 0);
-        assert_eq!(opts.command, vec![] as Vec<String>);
         assert_eq!(opts.scan_order, ScanOrder::Serial);
     }
 
@@ -402,10 +349,8 @@ mod tests {
         assert_eq!(opts.addresses, config.addresses.unwrap());
         assert_eq!(opts.greppable, config.greppable.unwrap());
         assert_eq!(opts.timeout, config.timeout.unwrap());
-        assert_eq!(opts.command, config.command.unwrap());
         assert_eq!(opts.accessible, config.accessible.unwrap());
         assert_eq!(opts.scan_order, config.scan_order.unwrap());
-        assert_eq!(opts.scripts, ScriptsRequired::Default);
     }
 
     #[test]
