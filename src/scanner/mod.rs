@@ -37,6 +37,7 @@ pub struct Scanner {
     greppable: bool,
     port_strategy: PortStrategy,
     accessible: bool,
+    diagnostic: bool,
     exclude_ports: Vec<u16>,
     udp: bool,
     timeout_overrides: Arc<RwLock<HashMap<IpAddr, Duration>>>,
@@ -52,6 +53,7 @@ impl Scanner {
         tries: u8,
         greppable: bool,
         port_strategy: PortStrategy,
+        diagnostic: bool,
         accessible: bool,
         exclude_ports: Vec<u16>,
         udp: bool,
@@ -64,6 +66,7 @@ impl Scanner {
             port_strategy,
             ips: ips.iter().map(ToOwned::to_owned).collect(),
             accessible,
+            diagnostic,
             exclude_ports,
             udp,
             timeout_overrides: Arc::new(RwLock::new(HashMap::new())),
@@ -274,7 +277,8 @@ impl Scanner {
 
         let tries = self.tries.get();
         for nr_try in 1..=tries {
-            match self.connect(socket).await {
+            let delay_used = self.current_timeout_for(socket.ip());
+            match self.connect(socket, delay_used).await {
                 Ok((tcp_stream, latency)) => {
                     debug!(
                         "Connection was successful, shutting down stream {}",
@@ -283,7 +287,7 @@ impl Scanner {
                     if let Err(e) = tcp_stream.shutdown(Shutdown::Both) {
                         debug!("Shutdown stream error {}", &e);
                     }
-                    self.fmt_ports(socket, latency);
+                    self.fmt_ports(socket, latency, delay_used);
                     self.update_timeout_after_success(socket.ip(), latency);
 
                     debug!("Return Ok after {nr_try} tries");
@@ -346,8 +350,11 @@ impl Scanner {
     /// // Timeout occurs after self.timeout seconds
     /// ```
     ///
-    async fn connect(&self, socket: SocketAddr) -> io::Result<(TcpStream, Duration)> {
-        let timeout = self.current_timeout_for(socket.ip());
+    async fn connect(
+        &self,
+        socket: SocketAddr,
+        timeout: Duration,
+    ) -> io::Result<(TcpStream, Duration)> {
         let start = Instant::now();
         let stream = io::timeout(timeout, async move { TcpStream::connect(socket).await }).await?;
         Ok((stream, start.elapsed()))
@@ -409,7 +416,7 @@ impl Scanner {
                     Ok(size) => {
                         debug!("Received {size} bytes");
                         let latency = start.elapsed();
-                        self.fmt_ports(socket, latency);
+                        self.fmt_ports(socket, latency, wait);
                         self.update_timeout_after_success(socket.ip(), latency);
                         Ok(true)
                     }
@@ -430,13 +437,30 @@ impl Scanner {
     }
 
     /// Formats and prints the port status
-    fn fmt_ports(&self, socket: SocketAddr, _latency: Duration) {
-        if !self.greppable {
-            if self.accessible {
-                println!("开放 {socket}");
+    fn fmt_ports(&self, socket: SocketAddr, latency: Duration, delay_used: Duration) {
+        if self.greppable {
+            return;
+        }
+
+        let latency_ms = latency.as_secs_f64() * 1_000.0;
+        let delay_ms = delay_used.as_secs_f64() * 1_000.0;
+
+        if self.accessible {
+            if self.diagnostic {
+                println!("开放 {socket} (延迟 {latency_ms:.2}ms, 使用延迟参数 {delay_ms:.2}ms)");
             } else {
-                println!("开放 {}", socket.to_string().purple());
+                println!("开放 {socket}");
             }
+            return;
+        }
+
+        if self.diagnostic {
+            println!(
+                "开放 {} (延迟 {latency_ms:.2}ms, 使用延迟参数 {delay_ms:.2}ms)",
+                socket.to_string().purple()
+            );
+        } else {
+            println!("开放 {}", socket.to_string().purple());
         }
     }
 }
@@ -464,6 +488,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             false,
@@ -488,6 +513,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             false,
@@ -511,6 +537,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             false,
@@ -533,6 +560,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             false,
@@ -558,6 +586,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             false,
@@ -582,6 +611,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             true,
@@ -606,6 +636,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             true,
@@ -629,6 +660,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             true,
@@ -651,6 +683,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             true,

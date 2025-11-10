@@ -100,6 +100,8 @@ fn parse_ports(tokens: &[String]) -> Result<Vec<u16>, String> {
       rustscan -a 192.168.0.1 -g
   · 无障碍模式 (--accessible):
       rustscan -a 192.168.0.1 --accessible
+  · 诊断输出 (-d/--diagnostic):
+      rustscan -a 192.168.0.1 -d
   · UDP 扫描 (--udp):
       rustscan -a 192.168.0.1 --udp
   · 指定 DNS/IP 输入文件:
@@ -144,6 +146,10 @@ pub struct Opts {
     /// 端口判定为关闭前的超时时长（毫秒）。
     #[arg(short, long, default_value = "1500")]
     pub timeout: u32,
+
+    /// 诊断模式：输出每个端口的实时延迟与当前使用的超时参数。
+    #[arg(short, long)]
+    pub diagnostic: bool,
 
     /// 端口被视为关闭前的重试次数，若设为 0 将自动调整为 1。
     #[arg(long, default_value = "1")]
@@ -218,6 +224,7 @@ impl Default for Opts {
             greppable: true,
             batch_size: 0,
             timeout: 0,
+            diagnostic: false,
             tries: 0,
             ulimit: None,
             accessible: false,

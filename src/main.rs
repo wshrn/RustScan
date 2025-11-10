@@ -67,6 +67,7 @@ fn main() {
         opts.tries,
         opts.greppable,
         PortStrategy::pick(&opts.range, opts.resolved_ports.clone(), opts.scan_order),
+        opts.diagnostic,
         opts.accessible,
         opts.exclude_ports.unwrap_or_default(),
         opts.udp,
