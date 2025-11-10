@@ -16,7 +16,7 @@ use std::{
     collections::HashSet,
     net::{IpAddr, Shutdown, SocketAddr},
     num::NonZeroU8,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 /// The class for the scanner
@@ -142,7 +142,6 @@ impl Scanner {
 
         let tries = self.tries.get();
         for nr_try in 1..=tries {
-            let start_time = Instant::now();
             match self.connect(socket).await {
                 Ok(tcp_stream) => {
                     debug!(
@@ -152,8 +151,7 @@ impl Scanner {
                     if let Err(e) = tcp_stream.shutdown(Shutdown::Both) {
                         debug!("Shutdown stream error {}", &e);
                     }
-                    let latency = start_time.elapsed();
-                    self.fmt_ports(socket, latency);
+                    self.fmt_ports(socket);
 
                     debug!("Return Ok after {nr_try} tries");
                     return Ok(socket);
@@ -272,14 +270,12 @@ impl Scanner {
                 let mut buf = [0u8; 1024];
 
                 udp_socket.connect(socket).await?;
-                let start_time = Instant::now();
                 udp_socket.send(payload).await?;
 
                 match io::timeout(wait, udp_socket.recv(&mut buf)).await {
                     Ok(size) => {
                         debug!("Received {size} bytes");
-                        let latency = start_time.elapsed();
-                        self.fmt_ports(socket, latency);
+                        self.fmt_ports(socket);
                         Ok(true)
                     }
                     Err(e) => {
@@ -299,17 +295,12 @@ impl Scanner {
     }
 
     /// Formats and prints the port status
-    fn fmt_ports(&self, socket: SocketAddr, latency: Duration) {
+    fn fmt_ports(&self, socket: SocketAddr) {
         if !self.greppable {
-            let latency_ms = latency.as_secs_f64() * 1000.0;
             if self.accessible {
-                println!("发现开放端口 {socket} (延迟 {:.2}ms)", latency_ms);
+                println!("[*] {socket}");
             } else {
-                println!(
-                    "发现开放端口 {} (延迟 {:.2}ms)",
-                    socket.to_string().purple(),
-                    latency_ms
-                );
+                println!("[*] {}", socket.to_string().purple());
             }
         }
     }

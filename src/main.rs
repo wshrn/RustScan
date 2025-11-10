@@ -92,6 +92,10 @@ fn main() {
             .push(socket.port());
     }
 
+    for ports in ports_per_ip.values_mut() {
+        ports.sort_unstable();
+    }
+
     for ip in ips {
         if ports_per_ip.contains_key(&ip) {
             continue;
@@ -150,7 +154,7 @@ fn print_opening() {
 | {}  }| { } |{ {__ {_   _}{ {__  /  ___} / {} \ |  `| |
 | .-. \| {_} |.-._} } | |  .-._} }\     }/  /\  \| |\  |
 `-' `-'`-----'`----'  `-'  `----'  `---' `-'  `-'`-' `-'
-现代化的端口扫描器"#;
+"#;
 
     println!("{}", s.gradient(Color::Green).bold());
     funny_opening!();
