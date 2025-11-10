@@ -12,7 +12,7 @@ use async_std::prelude::*;
 use async_std::{io, net::UdpSocket};
 use colored::Colorize;
 use futures::stream::FuturesUnordered;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::{
     collections::HashSet,
@@ -79,6 +79,13 @@ impl Scanner {
         self.timeout
     }
 
+    fn has_timeout_override(&self, ip: IpAddr) -> bool {
+        self.timeout_overrides
+            .read()
+            .map(|overrides| overrides.contains_key(&ip))
+            .unwrap_or(false)
+    }
+
     fn update_timeout_after_success(&self, ip: IpAddr, latency: Duration) {
         if let Ok(mut overrides) = self.timeout_overrides.write() {
             if overrides.contains_key(&ip) {
@@ -86,7 +93,7 @@ impl Scanner {
             }
 
             let previous_timeout = self.timeout;
-            let scaled_secs = (latency.as_secs_f64() * 1.5_f64).max(0.001);
+            let scaled_secs = (latency.as_secs_f64() * 2.2_f64).max(0.001);
             let adjusted_timeout = Duration::from_secs_f64(scaled_secs);
 
             overrides.insert(ip, adjusted_timeout);
@@ -111,14 +118,42 @@ impl Scanner {
             .collect();
         let mut socket_iterator: SocketIterator = SocketIterator::new(&self.ips, &ports);
         let mut open_sockets: Vec<SocketAddr> = Vec::new();
-        let mut ftrs = FuturesUnordered::new();
+        let mut ftrs: FuturesUnordered<_> = FuturesUnordered::new();
         let mut errors: HashSet<String> = HashSet::new();
         let udp_map = get_parsed_data();
+        let mut deferred: VecDeque<SocketAddr> = VecDeque::new();
+        let mut inflight_without_override: HashMap<IpAddr, usize> = HashMap::new();
 
-        for _ in 0..self.batch_size {
-            if let Some(socket) = socket_iterator.next() {
-                ftrs.push(self.scan_socket(socket, udp_map.clone()));
-            } else {
+        'initial_fill: while ftrs.len() < self.batch_size as usize {
+            let mut scheduled = false;
+            let attempts = deferred.len() + 1;
+            for _ in 0..attempts {
+                let next_socket = if let Some(socket) = deferred.pop_front() {
+                    Some(socket)
+                } else {
+                    socket_iterator.next()
+                };
+
+                let Some(socket) = next_socket else {
+                    break 'initial_fill;
+                };
+
+                let ip = socket.ip();
+                if !self.has_timeout_override(ip) {
+                    let entry = inflight_without_override.entry(ip).or_insert(0);
+                    if *entry >= 1 {
+                        deferred.push_back(socket);
+                        continue;
+                    }
+                    *entry += 1;
+                }
+
+                ftrs.push(self.spawn_scan_task(socket, udp_map.clone()));
+                scheduled = true;
+                break;
+            }
+
+            if !scheduled {
                 break;
             }
         }
@@ -129,9 +164,18 @@ impl Scanner {
             &ports.len(),
             (self.ips.len() * ports.len()));
 
-        while let Some(result) = ftrs.next().await {
-            if let Some(socket) = socket_iterator.next() {
-                ftrs.push(self.scan_socket(socket, udp_map.clone()));
+        while let Some((ip, result)) = ftrs.next().await {
+            let mut remove_entry = false;
+            if let Some(count) = inflight_without_override.get_mut(&ip) {
+                if *count > 0 {
+                    *count -= 1;
+                }
+                if *count == 0 {
+                    remove_entry = true;
+                }
+            }
+            if remove_entry {
+                inflight_without_override.remove(&ip);
             }
 
             match result {
@@ -141,6 +185,40 @@ impl Scanner {
                     if errors.len() < self.ips.len() * 1000 {
                         errors.insert(error_string);
                     }
+                }
+            }
+
+            'refill: while ftrs.len() < self.batch_size as usize {
+                let mut scheduled = false;
+                let attempts = deferred.len() + 1;
+                for _ in 0..attempts {
+                    let next_socket = if let Some(socket) = deferred.pop_front() {
+                        Some(socket)
+                    } else {
+                        socket_iterator.next()
+                    };
+
+                    let Some(socket) = next_socket else {
+                        break 'refill;
+                    };
+
+                    let candidate_ip = socket.ip();
+                    if !self.has_timeout_override(candidate_ip) {
+                        let entry = inflight_without_override.entry(candidate_ip).or_insert(0);
+                        if *entry >= 1 {
+                            deferred.push_back(socket);
+                            continue;
+                        }
+                        *entry += 1;
+                    }
+
+                    ftrs.push(self.spawn_scan_task(socket, udp_map.clone()));
+                    scheduled = true;
+                    break;
+                }
+
+                if !scheduled {
+                    break;
                 }
             }
         }
@@ -163,6 +241,18 @@ impl Scanner {
     /// ```
     ///
     /// Note: `self` must contain `self.ip`.
+    fn spawn_scan_task(
+        &self,
+        socket: SocketAddr,
+        udp_map: BTreeMap<Vec<u16>, Vec<u8>>,
+    ) -> impl std::future::Future<Output = (IpAddr, io::Result<SocketAddr>)> + '_ {
+        let ip = socket.ip();
+        async move {
+            let result = self.scan_socket(socket, udp_map).await;
+            (ip, result)
+        }
+    }
+
     async fn scan_socket(
         &self,
         socket: SocketAddr,
