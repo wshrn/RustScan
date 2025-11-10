@@ -95,7 +95,6 @@ macro_rules! funny_opening {
             "扫描速度快到“同步确认”都来不及说完。",
             "RustScan：'404 Not Found' 与 '200 OK' 的交汇点。",
             "RustScan：一次一个 IP 地探索数字世界。",
-            "TreadStone 到此打卡 🚀",
             "有了 RustScan，我扫端口快到防火墙都闪了腰。💨",
             "扫描速度太快，连互联网都收到了超速罚单！",
         ];

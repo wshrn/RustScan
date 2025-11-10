@@ -1,4 +1,5 @@
 //! Core functionality for actual scanning behaviour.
+use crate::detail;
 use crate::generated::get_parsed_data;
 use crate::port_strategy::PortStrategy;
 use log::debug;
@@ -84,9 +85,16 @@ impl Scanner {
                 return;
             }
 
+            let previous_timeout = self.timeout;
             let scaled_secs = (latency.as_secs_f64() * 1.5_f64).max(0.001);
             let adjusted_timeout = Duration::from_secs_f64(scaled_secs);
+
             overrides.insert(ip, adjusted_timeout);
+
+            let from_ms = previous_timeout.as_secs_f64() * 1000.0;
+            let to_ms = adjusted_timeout.as_secs_f64() * 1000.0;
+            let message = format!("强化介入 IP {ip} 延迟从 {from_ms:.2} 优化至 {to_ms:.2} 毫秒");
+            detail!(message, self.greppable, self.accessible);
         }
     }
 
