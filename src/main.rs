@@ -119,22 +119,23 @@ fn main() {
 
         // Ports are printed as 80,443 (comma separated without spaces).
         let ports_str = vec_str_ports.join(",");
+        let open_count = ports.len();
 
         if opts.greppable {
             println!("{} -> [{}]", &ip, ports_str);
+            println!("开放端口总数: {open_count}");
             continue;
         }
 
-        let message = format!("{ip} 的开放端口: [{ports_str}]");
+        let message = format!("[~] {ip} 的开放端口: [{ports_str}]");
         detail!(message, opts.greppable, opts.accessible);
-    }
 
-    let total_open_ports: usize = ports_per_ip.values().map(|ports| ports.len()).sum();
-    let summary_message = format!("开放端口总数: {total_open_ports}");
-    if opts.greppable || opts.accessible {
-        println!("{summary_message}");
-    } else {
-        println!("{}", summary_message.cyan());
+        let summary_message = format!("开放端口总数: {open_count}");
+        if opts.accessible {
+            println!("{summary_message}");
+        } else {
+            println!("{}", summary_message.cyan());
+        }
     }
 
     // To use the runtime benchmark, run the process as: RUST_LOG=info ./rustscan
