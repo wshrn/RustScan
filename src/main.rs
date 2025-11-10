@@ -71,7 +71,7 @@ fn main() {
         Duration::from_millis(opts.timeout.into()),
         opts.tries,
         opts.greppable,
-        PortStrategy::pick(&opts.range, opts.ports, opts.scan_order),
+        PortStrategy::pick(&opts.ports, opts.scan_order),
         opts.accessible,
         opts.exclude_ports.unwrap_or_default(),
         opts.udp,
@@ -123,6 +123,14 @@ fn main() {
 
         let message = format!("{ip} 的开放端口: [{ports_str}]");
         detail!(message, opts.greppable, opts.accessible);
+    }
+
+    let total_open_ports: usize = ports_per_ip.values().map(|ports| ports.len()).sum();
+    let summary_message = format!("开放端口总数: {total_open_ports}");
+    if opts.greppable || opts.accessible {
+        println!("{summary_message}");
+    } else {
+        println!("{}", summary_message.cyan());
     }
 
     // To use the runtime benchmark, run the process as: RUST_LOG=info ./rustscan
