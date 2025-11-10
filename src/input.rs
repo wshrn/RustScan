@@ -1,6 +1,7 @@
 //! 提供扫描参数的解析与存储功能。
 use clap::{Parser, ValueEnum};
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::str::FromStr;
 
 const LOWEST_PORT_NUMBER: u16 = 1;
@@ -128,7 +129,7 @@ impl FromStr for PortSelection {
     about = "高速端口扫描器，采用 Rust 构建。",
     long_about = "高速端口扫描器，采用 Rust 构建。\n警告：请勿对敏感基础设施使用本程序，目标服务器可能无法承受大量并发套接字。",
     help_template = "{name} {version}\n{about}\n\n用法:\n  {usage}\n\n参数:\n{options}\n{after-help}",
-    after_help = "示例:\n  rustscan -a 192.168.0.1\n  rustscan -a 192.168.0.1,10.0.0.0/24 -p 80,443 --exclude-ports 22\n  rustscan -a targets.txt -p 1-1024 --scan-order random --timeout 3000",
+    after_help = "示例:\n  rustscan -a 192.168.0.1\n  rustscan -a 192.168.0.1,10.0.0.0/24 -p 80,443 --exclude-ports 22\n  rustscan -a targets.txt -p 1-1024 --scan-order random --timeout 3000\n  rustscan -a 192.168.0.0/24 -ht 5 -hs 40",
 )]
 #[allow(clippy::struct_excessive_bools)]
 /// RustScan 命令行参数定义。
@@ -203,6 +204,30 @@ pub struct Opts {
     /// 示例：`--udp`。
     #[arg(long)]
     pub udp: bool,
+
+    /// HTTP/HTTPS 探测的超时时间（秒）。
+    /// 示例：`-ht 5` 或 `--http-timeout 5`。
+    #[arg(
+        short = 'T',
+        long = "http-timeout",
+        visible_alias = "ht",
+        value_name = "SECONDS",
+        default_value = "3",
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    pub http_timeout: u64,
+
+    /// HTTP/HTTPS 探测线程池大小。
+    /// 示例：`-hs 50` 或 `--http-threads 50`。
+    #[arg(
+        short = 'S',
+        long = "http-threads",
+        visible_alias = "hs",
+        value_name = "THREADS",
+        default_value = "20",
+        value_parser = clap::value_parser!(u16).range(1..)
+    )]
+    pub http_threads: u16,
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -214,10 +239,38 @@ impl Opts {
     pub fn read_from<I, T>(args: I) -> Self
     where
         I: IntoIterator<Item = T>,
-        T: Into<std::ffi::OsString> + Clone,
+        T: Into<std::ffi::OsString>,
     {
-        Opts::parse_from(args)
+        Opts::parse_from(normalize_args(args))
     }
+}
+
+fn normalize_args<I, T>(args: I) -> Vec<OsString>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString>,
+{
+    args.into_iter()
+        .map(Into::into)
+        .map(|arg| normalize_flag(arg, "-ht", "--http-timeout"))
+        .map(|arg| normalize_flag(arg, "-hs", "--http-threads"))
+        .collect()
+}
+
+fn normalize_flag(arg: OsString, short_alias: &str, long_flag: &str) -> OsString {
+    if let Some(value) = arg.clone().into_string().ok().and_then(|text| {
+        if text == short_alias {
+            Some(long_flag.to_string())
+        } else if let Some(rest) = text.strip_prefix(&(short_alias.to_string() + "=")) {
+            Some(format!("{long_flag}={rest}"))
+        } else {
+            None
+        }
+    }) {
+        return OsString::from(value);
+    }
+
+    arg
 }
 
 impl Default for Opts {
@@ -240,6 +293,8 @@ impl Default for Opts {
             exclude_ports: None,
             exclude_addresses: None,
             udp: false,
+            http_timeout: 3,
+            http_threads: 20,
         }
     }
 }

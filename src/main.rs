@@ -17,8 +17,10 @@ use std::io::BufWriter;
 use std::io::Write;
 use std::net::IpAddr;
 use std::string::ToString;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use rayon::ThreadPoolBuilder;
 use rustscan::address::parse_addresses;
 
 extern crate colorful;
@@ -161,7 +163,7 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
     }
 
     let client = match Client::builder()
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(opts.http_timeout))
         .danger_accept_invalid_certs(true)
         .build()
     {
@@ -176,44 +178,83 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
         }
     };
 
-    let mut discovered_urls = BTreeSet::new();
+    let thread_count = usize::from(opts.http_threads.max(1));
+    let pool = match ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .thread_name(|idx| format!("http-probe-{idx}"))
+        .build()
+    {
+        Ok(pool) => pool,
+        Err(error) => {
+            warning!(
+                format!("初始化 HTTP 探测线程池失败: {error}"),
+                opts.greppable,
+                opts.accessible
+            );
+            return;
+        }
+    };
 
-    for (ip, ports) in ports_per_ip {
-        for &port in ports {
-            for scheme in ["http", "https"] {
-                let url = build_url(*ip, port, scheme);
+    let client = Arc::new(client);
+    let discovered_urls = Arc::new(Mutex::new(BTreeSet::new()));
 
-                match client.get(&url).send() {
-                    Ok(response) => {
-                        let status_code = response.status().as_u16();
-                        match response.bytes() {
-                            Ok(body) => {
-                                let body_len = body.len();
-                                let preview_len = body_len.min(512_000);
-                                let body_preview = String::from_utf8_lossy(&body[..preview_len]);
-                                let title = extract_title(&body_preview);
-                                let message = if title.is_empty() {
-                                    format!("{url} {status_code} {body_len}")
-                                } else {
-                                    format!("{url} {status_code} {body_len} {title}")
-                                };
+    pool.scope(|scope| {
+        for (ip, ports) in ports_per_ip {
+            for &port in ports {
+                for scheme in ["http", "https"] {
+                    let client = Arc::clone(&client);
+                    let discovered_urls = Arc::clone(&discovered_urls);
+                    let ip = *ip;
+                    scope.spawn(move |_| {
+                        let url = build_url(ip, port, scheme);
 
-                                println!("{message}");
+                        match client.get(&url).send() {
+                            Ok(response) => {
+                                let status_code = response.status().as_u16();
+                                match response.bytes() {
+                                    Ok(body) => {
+                                        let body_len = body.len();
+                                        let preview_len = body_len.min(512_000);
+                                        let body_preview =
+                                            String::from_utf8_lossy(&body[..preview_len]);
+                                        let title = extract_title(&body_preview);
+                                        let message = if title.is_empty() {
+                                            format!("{url} {status_code} {body_len}")
+                                        } else {
+                                            format!("{url} {status_code} {body_len} {title}")
+                                        };
 
-                                discovered_urls.insert(url);
+                                        println!("{message}");
+
+                                        if let Ok(mut urls) = discovered_urls.lock() {
+                                            urls.insert(url);
+                                        }
+                                    }
+                                    Err(error) => {
+                                        debug!("读取 {url} 响应体失败: {error}");
+                                    }
+                                }
                             }
                             Err(error) => {
-                                debug!("读取 {url} 响应体失败: {error}");
+                                debug!("请求 {url} 时发生错误: {error}");
                             }
                         }
-                    }
-                    Err(error) => {
-                        debug!("请求 {url} 时发生错误: {error}");
-                    }
+                    });
                 }
             }
         }
-    }
+    });
+
+    let discovered_urls = match Arc::try_unwrap(discovered_urls) {
+        Ok(mutex) => match mutex.into_inner() {
+            Ok(set) => set,
+            Err(poisoned) => poisoned.into_inner(),
+        },
+        Err(arc) => match arc.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        },
+    };
 
     if discovered_urls.is_empty() {
         return;
