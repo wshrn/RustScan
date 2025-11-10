@@ -430,17 +430,12 @@ impl Scanner {
     }
 
     /// Formats and prints the port status
-    fn fmt_ports(&self, socket: SocketAddr, latency: Duration) {
-        let latency_ms = latency.as_secs_f64() * 1000.0;
-        let latency_display = format!("{latency_ms:.2}");
+    fn fmt_ports(&self, socket: SocketAddr, _latency: Duration) {
         if !self.greppable {
             if self.accessible {
-                println!("发现开放端口 {socket} 延迟 {latency_display}ms");
+                println!("开放 {socket}");
             } else {
-                println!(
-                    "发现开放端口 {} 延迟 {latency_display}ms",
-                    socket.to_string().purple()
-                );
+                println!("开放 {}", socket.to_string().purple());
             }
         }
     }
