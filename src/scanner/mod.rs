@@ -16,7 +16,7 @@ use std::{
     collections::HashSet,
     net::{IpAddr, Shutdown, SocketAddr},
     num::NonZeroU8,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// The class for the scanner
@@ -143,7 +143,7 @@ impl Scanner {
         let tries = self.tries.get();
         for nr_try in 1..=tries {
             match self.connect(socket).await {
-                Ok(tcp_stream) => {
+                Ok((tcp_stream, latency)) => {
                     debug!(
                         "Connection was successful, shutting down stream {}",
                         &socket
@@ -151,7 +151,7 @@ impl Scanner {
                     if let Err(e) = tcp_stream.shutdown(Shutdown::Both) {
                         debug!("Shutdown stream error {}", &e);
                     }
-                    self.fmt_ports(socket);
+                    self.fmt_ports(socket, latency);
 
                     debug!("Return Ok after {nr_try} tries");
                     return Ok(socket);
@@ -208,17 +208,18 @@ impl Scanner {
     /// let ip = IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1));
     /// let socket = SocketAddr::new(ip, port);
     /// scanner.connect(socket);
-    /// // returns Result which is either Ok(stream) for port is open, or Er for port is closed.
+    /// // returns Result which is either Ok((stream, latency)) for port is open, or Err for port is closed.
     /// // Timeout occurs after self.timeout seconds
     /// ```
     ///
-    async fn connect(&self, socket: SocketAddr) -> io::Result<TcpStream> {
+    async fn connect(&self, socket: SocketAddr) -> io::Result<(TcpStream, Duration)> {
+        let start = Instant::now();
         let stream = io::timeout(
             self.timeout,
             async move { TcpStream::connect(socket).await },
         )
         .await?;
-        Ok(stream)
+        Ok((stream, start.elapsed()))
     }
 
     /// Binds to a UDP socket so we can send and receive packets
@@ -270,12 +271,13 @@ impl Scanner {
                 let mut buf = [0u8; 1024];
 
                 udp_socket.connect(socket).await?;
+                let start = Instant::now();
                 udp_socket.send(payload).await?;
 
                 match io::timeout(wait, udp_socket.recv(&mut buf)).await {
                     Ok(size) => {
                         debug!("Received {size} bytes");
-                        self.fmt_ports(socket);
+                        self.fmt_ports(socket, start.elapsed());
                         Ok(true)
                     }
                     Err(e) => {
@@ -295,12 +297,17 @@ impl Scanner {
     }
 
     /// Formats and prints the port status
-    fn fmt_ports(&self, socket: SocketAddr) {
+    fn fmt_ports(&self, socket: SocketAddr, latency: Duration) {
+        let latency_ms = latency.as_secs_f64() * 1000.0;
+        let latency_display = format!("{latency_ms:.2}");
         if !self.greppable {
             if self.accessible {
-                println!("发现开放端口 {socket}");
+                println!("发现开放端口 {socket} 延迟 {latency_display}ms");
             } else {
-                println!("发现开放端口 {}", socket.to_string().purple());
+                println!(
+                    "发现开放端口 {} 延迟 {latency_display}ms",
+                    socket.to_string().purple()
+                );
             }
         }
     }

@@ -1,5 +1,5 @@
 //! 提供扫描参数的解析与存储功能。
-use clap::{Parser, ValueEnum};
+use clap::{error::ErrorKind, CommandFactory, Parser, ValueEnum};
 
 const LOWEST_PORT_NUMBER: u16 = 1;
 const TOP_PORT_NUMBER: u16 = 65535;
@@ -11,6 +11,7 @@ const TOP_PORT_NUMBER: u16 = 65535;
 pub enum ScanOrder {
     Serial,
     Random,
+    HighFrequency,
 }
 
 /// Represents the range of ports to be scanned.
@@ -34,14 +35,40 @@ fn parse_range(input: &str) -> Result<PortRange, String> {
     }
 
     match range.unwrap().as_slice() {
-        [start, end] => Ok(PortRange {
+        [start, end] if start <= end => Ok(PortRange {
             start: *start,
             end: *end,
         }),
+        [_, _] => Err(String::from("端口范围的起始值必须小于或等于结束值。")),
         _ => Err(String::from(
             "端口范围格式必须为 '起始-结束'，例如：1-1000。",
         )),
     }
+}
+
+fn parse_ports(tokens: &[String]) -> Result<Vec<u16>, String> {
+    let mut ports = Vec::new();
+
+    for token in tokens {
+        let trimmed = token.trim();
+
+        if trimmed.is_empty() {
+            return Err(String::from("端口值不能为空。"));
+        }
+
+        if trimmed.contains('-') {
+            let range = parse_range(trimmed)?;
+            ports.extend(range.start..=range.end);
+        } else {
+            ports.push(
+                trimmed
+                    .parse::<u16>()
+                    .map_err(|_| String::from("端口必须是 0-65535 之间的整数或有效范围。"))?,
+            );
+        }
+    }
+
+    Ok(ports)
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -59,12 +86,12 @@ pub struct Opts {
     #[arg(short, long, value_delimiter = ',')]
     pub addresses: Vec<String>,
 
-    /// 以英文逗号分隔的端口列表，例如：80,443,8080。
+    /// 以英文逗号分隔的端口或端口范围列表，例如：80,443,8080 或 1-1000。
     #[arg(short, long, value_delimiter = ',')]
-    pub ports: Option<Vec<u16>>,
+    pub ports: Option<Vec<String>>,
 
     /// 端口范围，格式为 起始-结束，例如：1-1000。
-    #[arg(short, long, conflicts_with = "ports", value_parser = parse_range)]
+    #[arg(skip)]
     pub range: Option<PortRange>,
 
     /// 隐藏启动横幅。
@@ -100,7 +127,7 @@ pub struct Opts {
     #[arg(short, long)]
     pub ulimit: Option<u64>,
 
-    /// 扫描顺序：serial 顺序扫描，random 随机扫描。
+    /// 扫描顺序：serial 顺序扫描，random 随机扫描，high-frequency 高频端口优先。
     #[arg(long, value_enum, ignore_case = true, default_value = "serial")]
     pub scan_order: ScanOrder,
 
@@ -115,6 +142,10 @@ pub struct Opts {
     /// 启用 UDP 扫描模式，发现会响应的 UDP 端口。
     #[arg(long)]
     pub udp: bool,
+
+    /// 展开后的端口列表，在参数解析阶段填充。
+    #[arg(skip)]
+    pub resolved_ports: Option<Vec<u16>>,
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -130,7 +161,18 @@ impl Opts {
     {
         let mut opts = Opts::parse_from(args);
 
-        if opts.ports.is_none() && opts.range.is_none() {
+        if let Some(ref raw_ports) = opts.ports {
+            match parse_ports(raw_ports) {
+                Ok(values) => opts.resolved_ports = Some(values),
+                Err(message) => {
+                    Opts::command()
+                        .error(ErrorKind::InvalidValue, message)
+                        .exit();
+                }
+            }
+        }
+
+        if opts.resolved_ports.is_none() && opts.range.is_none() {
             opts.range = Some(PortRange {
                 start: LOWEST_PORT_NUMBER,
                 end: TOP_PORT_NUMBER,
@@ -159,6 +201,7 @@ impl Default for Opts {
             exclude_ports: None,
             exclude_addresses: None,
             udp: false,
+            resolved_ports: None,
         }
     }
 }
@@ -178,11 +221,25 @@ mod tests {
         let opts = Opts::default();
         assert_eq!(opts.range, None);
         assert!(opts.ports.is_none());
+        assert!(opts.resolved_ports.is_none());
 
         let parsed_opts = Opts::read_from(["rustscan"]);
         let range = parsed_opts.range.expect("默认解析应生成完整的端口范围");
 
         assert_eq!(range.start, super::LOWEST_PORT_NUMBER);
         assert_eq!(range.end, super::TOP_PORT_NUMBER);
+        assert!(parsed_opts.resolved_ports.is_none());
+    }
+
+    #[test]
+    fn ports_option_accepts_range_values() {
+        let opts = Opts::read_from(["rustscan", "-p", "80-82"]);
+        assert_eq!(opts.resolved_ports, Some(vec![80, 81, 82]));
+    }
+
+    #[test]
+    fn ports_option_accepts_mixed_values() {
+        let opts = Opts::read_from(["rustscan", "-p", "80,81-83,90"]);
+        assert_eq!(opts.resolved_ports, Some(vec![80, 81, 82, 83, 90]));
     }
 }
