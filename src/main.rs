@@ -6,9 +6,8 @@ use rustscan::benchmark::{Benchmark, NamedTimer};
 use rustscan::input::Opts;
 use rustscan::port_strategy::PortStrategy;
 use rustscan::scanner::Scanner;
-use rustscan::{detail, funny_opening, warning};
+use rustscan::{detail, warning};
 
-use colorful::{Color, Colorful};
 use futures::executor::block_on;
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -43,10 +42,6 @@ fn main() {
     let opts: Opts = Opts::read();
 
     debug!("Main() `opts` arguments are {opts:?}");
-
-    if !opts.greppable && !opts.accessible && !opts.no_banner {
-        print_opening();
-    }
 
     let ips: Vec<IpAddr> = parse_addresses(&opts);
 
@@ -134,20 +129,6 @@ fn main() {
     info!("{}", benchmarks.summary());
 }
 
-/// Prints the opening title of RustScan
-#[allow(clippy::items_after_statements, clippy::needless_raw_string_hashes)]
-fn print_opening() {
-    debug!("Printing opening");
-    let s = r#".----. .-. .-. .----..---.  .----. .---.   .--.  .-. .-.
-| {}  }| { } |{ {__ {_   _}{ {__  /  ___} / {} \ |  `| |
-| .-. \| {_} |.-._} } | |  .-._} }\     }/  /\  \| |\  |
-`-' `-'`-----'`----'  `-'  `----'  `---' `-'  `-'`-' `-'
-现代化的端口扫描器"#;
-
-    println!("{}", s.gradient(Color::Green).bold());
-    funny_opening!();
-}
-
 #[cfg(unix)]
 fn adjust_ulimit_size(opts: &Opts) -> u64 {
     use rlimit::Resource;
@@ -217,9 +198,9 @@ fn infer_batch_size(opts: &Opts, ulimit: u64) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    use super::Opts;
     #[cfg(unix)]
     use super::{adjust_ulimit_size, infer_batch_size};
-    use super::{print_opening, Opts};
 
     #[test]
     #[cfg(unix)]
@@ -283,11 +264,5 @@ mod tests {
         let batch_size = infer_batch_size(&opts, 1_000_000);
 
         assert!(batch_size == opts.batch_size);
-    }
-
-    #[test]
-    fn test_print_opening_no_panic() {
-        // print opening should not panic
-        print_opening();
     }
 }

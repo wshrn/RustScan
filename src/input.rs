@@ -94,10 +94,6 @@ pub struct Opts {
     #[arg(skip)]
     pub range: Option<PortRange>,
 
-    /// 隐藏启动横幅。
-    #[arg(long)]
-    pub no_banner: bool,
-
     /// Grep 模式：仅输出端口，方便重定向或 grep 处理。
     #[arg(short, long)]
     pub greppable: bool,
@@ -197,7 +193,6 @@ impl Default for Opts {
             accessible: false,
             resolver: None,
             scan_order: ScanOrder::HighFrequency,
-            no_banner: false,
             exclude_ports: None,
             exclude_addresses: None,
             udp: false,
