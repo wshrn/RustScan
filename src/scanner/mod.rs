@@ -11,7 +11,8 @@ use async_std::prelude::*;
 use async_std::{io, net::UdpSocket};
 use colored::Colorize;
 use futures::stream::FuturesUnordered;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, RwLock};
 use std::{
     collections::HashSet,
     net::{IpAddr, Shutdown, SocketAddr},
@@ -37,6 +38,7 @@ pub struct Scanner {
     accessible: bool,
     exclude_ports: Vec<u16>,
     udp: bool,
+    timeout_overrides: Arc<RwLock<HashMap<IpAddr, Duration>>>,
 }
 
 // Allowing too many arguments for clippy.
@@ -63,6 +65,28 @@ impl Scanner {
             accessible,
             exclude_ports,
             udp,
+            timeout_overrides: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    fn current_timeout_for(&self, ip: IpAddr) -> Duration {
+        if let Ok(overrides) = self.timeout_overrides.read() {
+            if let Some(timeout) = overrides.get(&ip) {
+                return *timeout;
+            }
+        }
+        self.timeout
+    }
+
+    fn update_timeout_after_success(&self, ip: IpAddr, latency: Duration) {
+        if let Ok(mut overrides) = self.timeout_overrides.write() {
+            if overrides.contains_key(&ip) {
+                return;
+            }
+
+            let scaled_secs = (latency.as_secs_f64() * 1.5_f64).max(0.001);
+            let adjusted_timeout = Duration::from_secs_f64(scaled_secs);
+            overrides.insert(ip, adjusted_timeout);
         }
     }
 
@@ -152,6 +176,7 @@ impl Scanner {
                         debug!("Shutdown stream error {}", &e);
                     }
                     self.fmt_ports(socket, latency);
+                    self.update_timeout_after_success(socket.ip(), latency);
 
                     debug!("Return Ok after {nr_try} tries");
                     return Ok(socket);
@@ -186,7 +211,8 @@ impl Scanner {
 
         let tries = self.tries.get();
         for _ in 1..=tries {
-            match self.udp_scan(socket, &payload, self.timeout).await {
+            let timeout = self.current_timeout_for(socket.ip());
+            match self.udp_scan(socket, &payload, timeout).await {
                 Ok(true) => return Ok(socket),
                 Ok(false) => continue,
                 Err(e) => return Err(e),
@@ -213,12 +239,9 @@ impl Scanner {
     /// ```
     ///
     async fn connect(&self, socket: SocketAddr) -> io::Result<(TcpStream, Duration)> {
+        let timeout = self.current_timeout_for(socket.ip());
         let start = Instant::now();
-        let stream = io::timeout(
-            self.timeout,
-            async move { TcpStream::connect(socket).await },
-        )
-        .await?;
+        let stream = io::timeout(timeout, async move { TcpStream::connect(socket).await }).await?;
         Ok((stream, start.elapsed()))
     }
 
@@ -277,7 +300,9 @@ impl Scanner {
                 match io::timeout(wait, udp_socket.recv(&mut buf)).await {
                     Ok(size) => {
                         debug!("Received {size} bytes");
-                        self.fmt_ports(socket, start.elapsed());
+                        let latency = start.elapsed();
+                        self.fmt_ports(socket, latency);
+                        self.update_timeout_after_success(socket.ip(), latency);
                         Ok(true)
                     }
                     Err(e) => {

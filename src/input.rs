@@ -128,7 +128,7 @@ pub struct Opts {
     pub ulimit: Option<u64>,
 
     /// 扫描顺序：serial 顺序扫描，random 随机扫描，high-frequency 高频端口优先。
-    #[arg(long, value_enum, ignore_case = true, default_value = "serial")]
+    #[arg(long, value_enum, ignore_case = true, default_value = "high-frequency")]
     pub scan_order: ScanOrder,
 
     /// 需要排除的端口列表（英文逗号分隔），例如：80,443,8080。
@@ -196,7 +196,7 @@ impl Default for Opts {
             ulimit: None,
             accessible: false,
             resolver: None,
-            scan_order: ScanOrder::Serial,
+            scan_order: ScanOrder::HighFrequency,
             no_banner: false,
             exclude_ports: None,
             exclude_addresses: None,
