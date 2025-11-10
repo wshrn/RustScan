@@ -40,7 +40,77 @@ pub struct Scanner {
     diagnostic: bool,
     exclude_ports: Vec<u16>,
     udp: bool,
-    timeout_overrides: Arc<RwLock<HashMap<IpAddr, Duration>>>,
+    host_states: Arc<RwLock<HashMap<IpAddr, HostAdaptiveState>>>,
+    socket_timeouts: Arc<RwLock<HashMap<SocketAddr, Duration>>>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct HostAdaptiveState {
+    pending_latencies: Vec<Duration>,
+    reference_latency: Option<Duration>,
+    current_timeout: Option<Duration>,
+}
+
+impl HostAdaptiveState {
+    fn has_override(&self) -> bool {
+        self.current_timeout.is_some()
+    }
+
+    fn current_timeout(&self, default: Duration) -> Duration {
+        self.current_timeout.unwrap_or(default)
+    }
+
+    fn scaled_timeout(latency: Duration) -> Duration {
+        let secs = (latency.as_secs_f64() * 2.0_f64).max(0.001);
+        Duration::from_secs_f64(secs)
+    }
+
+    fn record_latency(
+        &mut self,
+        default_timeout: Duration,
+        latency: Duration,
+    ) -> Option<(Duration, Duration)> {
+        if self.reference_latency.is_none() {
+            self.pending_latencies.push(latency);
+            if self.pending_latencies.len() < 3 {
+                return None;
+            }
+
+            self.pending_latencies.sort();
+            let median = self.pending_latencies[self.pending_latencies.len() / 2];
+            let new_timeout = Self::scaled_timeout(median);
+            let previous_timeout = self.current_timeout.unwrap_or(default_timeout);
+
+            self.reference_latency = Some(median);
+            self.current_timeout = Some(new_timeout);
+            self.pending_latencies.clear();
+
+            if new_timeout != previous_timeout {
+                return Some((previous_timeout, new_timeout));
+            }
+
+            return None;
+        }
+
+        let Some(reference_latency) = self.reference_latency else {
+            return None;
+        };
+
+        let threshold = reference_latency.as_secs_f64() * 1.5_f64;
+        if latency.as_secs_f64() > threshold {
+            let new_timeout = Self::scaled_timeout(latency);
+            let previous_timeout = self.current_timeout.unwrap_or(default_timeout);
+            if new_timeout > previous_timeout {
+                self.current_timeout = Some(new_timeout);
+                self.reference_latency = Some(latency);
+                return Some((previous_timeout, new_timeout));
+            } else {
+                self.reference_latency = Some(latency);
+            }
+        }
+
+        None
+    }
 }
 
 // Allowing too many arguments for clippy.
@@ -69,46 +139,82 @@ impl Scanner {
             diagnostic,
             exclude_ports,
             udp,
-            timeout_overrides: Arc::new(RwLock::new(HashMap::new())),
+            host_states: Arc::new(RwLock::new(HashMap::new())),
+            socket_timeouts: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    fn current_timeout_for(&self, ip: IpAddr) -> Duration {
-        if let Ok(overrides) = self.timeout_overrides.read() {
-            if let Some(timeout) = overrides.get(&ip) {
-                return *timeout;
+    fn has_timeout_override(&self, ip: IpAddr) -> bool {
+        self.host_states
+            .read()
+            .map(|states| {
+                states
+                    .get(&ip)
+                    .map_or(false, HostAdaptiveState::has_override)
+            })
+            .unwrap_or(false)
+    }
+
+    fn current_timeout_for_ip(&self, ip: IpAddr) -> Duration {
+        if let Ok(states) = self.host_states.read() {
+            if let Some(state) = states.get(&ip) {
+                return state.current_timeout(self.timeout);
             }
         }
         self.timeout
     }
 
-    fn has_timeout_override(&self, ip: IpAddr) -> bool {
-        self.timeout_overrides
-            .read()
-            .map(|overrides| overrides.contains_key(&ip))
-            .unwrap_or(false)
+    fn current_timeout_for_socket(&self, socket: SocketAddr) -> Duration {
+        if let Ok(map) = self.socket_timeouts.read() {
+            if let Some(timeout) = map.get(&socket) {
+                return *timeout;
+            }
+        }
+
+        let fallback = self.current_timeout_for_ip(socket.ip());
+        if let Ok(mut map) = self.socket_timeouts.write() {
+            map.entry(socket).or_insert(fallback);
+        }
+        fallback
+    }
+
+    fn prepare_socket(&self, socket: SocketAddr) {
+        let timeout = self.current_timeout_for_ip(socket.ip());
+        if let Ok(mut map) = self.socket_timeouts.write() {
+            map.entry(socket).or_insert(timeout);
+        }
+    }
+
+    fn clear_socket_timeout(&self, socket: SocketAddr) {
+        if let Ok(mut map) = self.socket_timeouts.write() {
+            map.remove(&socket);
+        }
+    }
+
+    fn propagate_timeout_for_ip(&self, ip: IpAddr, timeout: Duration) {
+        if let Ok(mut map) = self.socket_timeouts.write() {
+            for (addr, value) in map.iter_mut() {
+                if addr.ip() == ip {
+                    *value = timeout;
+                }
+            }
+        }
     }
 
     fn update_timeout_after_success(&self, ip: IpAddr, latency: Duration) {
-        if let Ok(mut overrides) = self.timeout_overrides.write() {
-            let scaled_secs = (latency.as_secs_f64() * 2.2_f64).max(0.001);
-            let adjusted_timeout = Duration::from_secs_f64(scaled_secs);
+        if let Ok(mut states) = self.host_states.write() {
+            let state = states.entry(ip).or_default();
+            if let Some((previous_timeout, adjusted_timeout)) =
+                state.record_latency(self.timeout, latency)
+            {
+                self.propagate_timeout_for_ip(ip, adjusted_timeout);
 
-            let (previous_timeout, should_update) = match overrides.get(&ip) {
-                Some(current) => (*current, adjusted_timeout > *current),
-                None => (self.timeout, true),
-            };
-
-            if !should_update {
-                return;
+                let from_ms = previous_timeout.as_secs_f64() * 1000.0;
+                let to_ms = adjusted_timeout.as_secs_f64() * 1000.0;
+                let message =
+                    format!("强化介入 IP {ip} 延迟从 {from_ms:.2} 优化至 {to_ms:.2} 毫秒");
+                detail!(message, self.greppable, self.accessible);
             }
-
-            overrides.insert(ip, adjusted_timeout);
-
-            let from_ms = previous_timeout.as_secs_f64() * 1000.0;
-            let to_ms = adjusted_timeout.as_secs_f64() * 1000.0;
-            let message = format!("强化介入 IP {ip} 延迟从 {from_ms:.2} 优化至 {to_ms:.2} 毫秒");
-            detail!(message, self.greppable, self.accessible);
         }
     }
 
@@ -165,6 +271,7 @@ impl Scanner {
                     *entry += 1;
                 }
 
+                self.prepare_socket(socket);
                 ftrs.push(self.spawn_scan_task(socket, udp_map.clone()));
                 scheduled = true;
                 break;
@@ -229,6 +336,7 @@ impl Scanner {
                         *entry += 1;
                     }
 
+                    self.prepare_socket(socket);
                     ftrs.push(self.spawn_scan_task(socket, udp_map.clone()));
                     scheduled = true;
                     break;
@@ -281,7 +389,7 @@ impl Scanner {
 
         let tries = self.tries.get();
         for nr_try in 1..=tries {
-            let delay_used = self.current_timeout_for(socket.ip());
+            let delay_used = self.current_timeout_for_socket(socket);
             match self.connect(socket, delay_used).await {
                 Ok((tcp_stream, latency)) => {
                     debug!(
@@ -294,6 +402,8 @@ impl Scanner {
                     self.fmt_ports(socket, latency, delay_used);
                     self.update_timeout_after_success(socket.ip(), latency);
 
+                    self.clear_socket_timeout(socket);
+
                     debug!("Return Ok after {nr_try} tries");
                     return Ok(socket);
                 }
@@ -305,6 +415,7 @@ impl Scanner {
                     if nr_try == tries {
                         error_string.push(' ');
                         error_string.push_str(&socket.ip().to_string());
+                        self.clear_socket_timeout(socket);
                         return Err(io::Error::other(error_string));
                     }
                 }
@@ -327,14 +438,21 @@ impl Scanner {
 
         let tries = self.tries.get();
         for _ in 1..=tries {
-            let timeout = self.current_timeout_for(socket.ip());
+            let timeout = self.current_timeout_for_socket(socket);
             match self.udp_scan(socket, &payload, timeout).await {
-                Ok(true) => return Ok(socket),
+                Ok(true) => {
+                    self.clear_socket_timeout(socket);
+                    return Ok(socket);
+                }
                 Ok(false) => continue,
-                Err(e) => return Err(e),
+                Err(e) => {
+                    self.clear_socket_timeout(socket);
+                    return Err(e);
+                }
             }
         }
 
+        self.clear_socket_timeout(socket);
         Err(io::Error::other(format!(
             "UDP scan timed-out for all tries on socket {socket}"
         )))
