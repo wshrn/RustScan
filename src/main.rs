@@ -115,13 +115,14 @@ fn main() {
 
         // Ports are printed as 80,443 (comma separated without spaces).
         let ports_str = vec_str_ports.join(",");
+        let total_ports = ports.len();
 
         if opts.greppable {
-            println!("{} -> [{}]", &ip, ports_str);
+            println!("{} -> [{}] (total={})", &ip, ports_str, total_ports);
             continue;
         }
 
-        let message = format!("{ip} 的开放端口: [{ports_str}]");
+        let message = format!("{ip} 的开放端口 (共 {total_ports} 个): [{ports_str}]");
         detail!(message, opts.greppable, opts.accessible);
     }
 

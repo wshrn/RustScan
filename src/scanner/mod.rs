@@ -91,13 +91,17 @@ impl Scanner {
 
     fn update_timeout_after_success(&self, ip: IpAddr, latency: Duration) {
         if let Ok(mut overrides) = self.timeout_overrides.write() {
-            if overrides.contains_key(&ip) {
-                return;
-            }
-
-            let previous_timeout = self.timeout;
             let scaled_secs = (latency.as_secs_f64() * 2.2_f64).max(0.001);
             let adjusted_timeout = Duration::from_secs_f64(scaled_secs);
+
+            let (previous_timeout, should_update) = match overrides.get(&ip) {
+                Some(current) => (*current, adjusted_timeout > *current),
+                None => (self.timeout, true),
+            };
+
+            if !should_update {
+                return;
+            }
 
             overrides.insert(ip, adjusted_timeout);
 
