@@ -76,7 +76,37 @@ fn parse_ports(tokens: &[String]) -> Result<Vec<u16>, String> {
     name = "rustscan",
     version = env!("CARGO_PKG_VERSION"),
     max_term_width = 120,
-    help_template = "{bin} {version}\n{about}\n\n用法:\n    {usage}\n\n选项:\n{options}",
+    help_template = "{bin} {version}\n{about}\n\n用法:\n  {usage}\n\n参数:\n{options}\n\n{after-help}",
+    after_help = r"示例:
+  · 指定目标 (-a/--addresses):
+      rustscan -a 192.168.0.1,example.com
+  · 指定端口 (-p/--ports):
+      rustscan -a 192.168.0.1 -p 80,443,1000-2000
+  · 控制扫描批量 (-b/--batch-size):
+      rustscan -a 192.168.0.1 -b 2000
+  · 调整超时 (-t/--timeout) 与重试 (--tries):
+      rustscan -a 192.168.0.1 -t 2500 --tries 3
+  · 指定解析器 (--resolver):
+      rustscan -a example.com --resolver 223.5.5.5,114.114.114.114
+  · 设置自定义 ulimit (-u/--ulimit):
+      rustscan -a 192.168.0.1 -u 65535
+  · 调整扫描顺序 (--scan-order):
+      rustscan -a 192.168.0.1 --scan-order serial
+  · 排除端口 (-e/--exclude-ports):
+      rustscan -a 192.168.0.1 -e 80,443,8000-8100
+  · 排除地址 (-x/--exclude-addresses):
+      rustscan -a targets.txt -x 10.0.0.0/24,example.org
+  · Grep 模式 (-g/--greppable):
+      rustscan -a 192.168.0.1 -g
+  · 无障碍模式 (--accessible):
+      rustscan -a 192.168.0.1 --accessible
+  · UDP 扫描 (--udp):
+      rustscan -a 192.168.0.1 --udp
+  · 指定 DNS/IP 输入文件:
+      rustscan -a targets.txt
+  · 结合排除与端口列表:
+      rustscan -a 192.168.0.1,192.168.0.2 -p 22,80-90 -e 23,25
+",
 )]
 #[allow(clippy::struct_excessive_bools)]
 /// 高速端口扫描器，采用 Rust 构建。

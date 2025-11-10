@@ -116,6 +116,16 @@ impl Scanner {
             .filter(|&port| !self.exclude_ports.contains(port))
             .copied()
             .collect();
+        let total_targets = self.ips.len().saturating_mul(ports.len());
+        detail!(
+            format!(
+                "计划扫描端口总数: {port_count} 个 (目标组合 {target_count} 个)",
+                port_count = ports.len(),
+                target_count = total_targets
+            ),
+            self.greppable,
+            self.accessible
+        );
         let mut socket_iterator: SocketIterator = SocketIterator::new(&self.ips, &ports);
         let mut open_sockets: Vec<SocketAddr> = Vec::new();
         let mut ftrs: FuturesUnordered<_> = FuturesUnordered::new();
