@@ -10,7 +10,11 @@ use rustscan::{detail, funny_opening, warning};
 
 use colorful::{Color, Colorful};
 use futures::executor::block_on;
-use std::collections::HashMap;
+use reqwest::blocking::Client;
+use std::collections::{BTreeSet, HashMap};
+use std::fs::File;
+use std::io::BufWriter;
+use std::io::Write;
 use std::net::IpAddr;
 use std::string::ToString;
 use std::time::Duration;
@@ -65,6 +69,8 @@ fn main() {
     #[cfg(not(unix))]
     let batch_size: u16 = AVERAGE_BATCH_SIZE;
 
+    let exclude_ports = opts.exclude_ports.clone().unwrap_or_default();
+
     let scanner = Scanner::new(
         &ips,
         batch_size,
@@ -73,7 +79,7 @@ fn main() {
         opts.greppable,
         PortStrategy::pick(&opts.ports, opts.scan_order),
         opts.accessible,
-        opts.exclude_ports.unwrap_or_default(),
+        exclude_ports,
         opts.udp,
     );
     debug!("Scanner finished building: {scanner:?}");
@@ -138,6 +144,8 @@ fn main() {
         }
     }
 
+    probe_web_services(&ports_per_ip, &opts);
+
     // To use the runtime benchmark, run the process as: RUST_LOG=info ./rustscan
     reporting_bench.end();
     benchmarks.push(reporting_bench);
@@ -145,6 +153,118 @@ fn main() {
     benchmarks.push(rustscan_bench);
     debug!("Benchmarks raw {benchmarks:?}");
     info!("{}", benchmarks.summary());
+}
+
+fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
+    if ports_per_ip.is_empty() {
+        return;
+    }
+
+    let client = match Client::builder()
+        .timeout(Duration::from_secs(5))
+        .danger_accept_invalid_certs(true)
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            warning!(
+                format!("构建 HTTP 探测客户端失败: {error}"),
+                opts.greppable,
+                opts.accessible
+            );
+            return;
+        }
+    };
+
+    let mut discovered_urls = BTreeSet::new();
+
+    for (ip, ports) in ports_per_ip {
+        for &port in ports {
+            for scheme in ["http", "https"] {
+                let url = build_url(*ip, port, scheme);
+
+                match client.get(&url).send() {
+                    Ok(response) => {
+                        let status_code = response.status().as_u16();
+                        match response.bytes() {
+                            Ok(body) => {
+                                let body_len = body.len();
+                                let preview_len = body_len.min(512_000);
+                                let body_preview = String::from_utf8_lossy(&body[..preview_len]);
+                                let title = extract_title(&body_preview);
+                                let message = if title.is_empty() {
+                                    format!("{url} {status_code} {body_len}")
+                                } else {
+                                    format!("{url} {status_code} {body_len} {title}")
+                                };
+
+                                println!("{message}");
+
+                                discovered_urls.insert(url);
+                            }
+                            Err(error) => {
+                                debug!("读取 {url} 响应体失败: {error}");
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        debug!("请求 {url} 时发生错误: {error}");
+                    }
+                }
+            }
+        }
+    }
+
+    if discovered_urls.is_empty() {
+        return;
+    }
+
+    if let Err(error) = write_urls_file(&discovered_urls) {
+        warning!(
+            format!("写入 urls.txt 失败: {error}"),
+            opts.greppable,
+            opts.accessible
+        );
+    }
+}
+
+fn build_url(ip: IpAddr, port: u16, scheme: &str) -> String {
+    match (scheme, port) {
+        ("http", 80) | ("https", 443) => format!("{scheme}://{ip}"),
+        _ => format!("{scheme}://{ip}:{port}"),
+    }
+}
+
+fn extract_title(body: &str) -> String {
+    let lower_body = body.to_lowercase();
+    if let Some(start_idx) = lower_body.find("<title") {
+        let remainder = &body[start_idx..];
+        if let Some(tag_close) = remainder.find('>') {
+            let after_tag = &remainder[tag_close + 1..];
+            let after_tag_lower = after_tag.to_lowercase();
+            if let Some(end_idx) = after_tag_lower.find("</title>") {
+                let title_raw = after_tag[..end_idx].trim();
+                if title_raw.is_empty() {
+                    return String::new();
+                }
+
+                return title_raw.split_whitespace().collect::<Vec<_>>().join(" ");
+            }
+        }
+    }
+
+    String::new()
+}
+
+fn write_urls_file(urls: &BTreeSet<String>) -> std::io::Result<()> {
+    let file = File::create("urls.txt")?;
+    let mut writer = BufWriter::new(file);
+
+    for url in urls {
+        writeln!(writer, "{url}")?;
+    }
+
+    writer.flush()
 }
 
 /// Prints the opening title of RustScan
