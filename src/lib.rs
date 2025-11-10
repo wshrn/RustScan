@@ -29,6 +29,7 @@
 //!         1, // Tries, how many retries should RustScan do?
 //!         true, // greppable is whether or not RustScan should print things, or wait until the end to print only the ip
 //!         strategy, // the port strategy used
+//!         false, // diagnostic mode to print latency and timeout details
 //!         true, // accessible, should the output be A11Y compliant?
 //!         vec![9000], // What ports should RustScan exclude?
 //!         false, // is this a UDP scan?

@@ -1,5 +1,5 @@
 //! 提供扫描参数的解析与存储功能。
-use clap::{Parser, ValueEnum};
+use clap::{error::ErrorKind, CommandFactory, Parser, ValueEnum};
 
 const LOWEST_PORT_NUMBER: u16 = 1;
 const TOP_PORT_NUMBER: u16 = 65535;
@@ -11,6 +11,7 @@ const TOP_PORT_NUMBER: u16 = 65535;
 pub enum ScanOrder {
     Serial,
     Random,
+    HighFrequency,
 }
 
 /// Represents the range of ports to be scanned.
@@ -34,14 +35,40 @@ fn parse_range(input: &str) -> Result<PortRange, String> {
     }
 
     match range.unwrap().as_slice() {
-        [start, end] => Ok(PortRange {
+        [start, end] if start <= end => Ok(PortRange {
             start: *start,
             end: *end,
         }),
+        [_, _] => Err(String::from("端口范围的起始值必须小于或等于结束值。")),
         _ => Err(String::from(
             "端口范围格式必须为 '起始-结束'，例如：1-1000。",
         )),
     }
+}
+
+fn parse_ports(tokens: &[String]) -> Result<Vec<u16>, String> {
+    let mut ports = Vec::new();
+
+    for token in tokens {
+        let trimmed = token.trim();
+
+        if trimmed.is_empty() {
+            return Err(String::from("端口值不能为空。"));
+        }
+
+        if trimmed.contains('-') {
+            let range = parse_range(trimmed)?;
+            ports.extend(range.start..=range.end);
+        } else {
+            ports.push(
+                trimmed
+                    .parse::<u16>()
+                    .map_err(|_| String::from("端口必须是 0-65535 之间的整数或有效范围。"))?,
+            );
+        }
+    }
+
+    Ok(ports)
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -49,7 +76,39 @@ fn parse_range(input: &str) -> Result<PortRange, String> {
     name = "rustscan",
     version = env!("CARGO_PKG_VERSION"),
     max_term_width = 120,
-    help_template = "{bin} {version}\n{about}\n\n用法:\n    {usage}\n\n选项:\n{options}",
+    help_template = "{bin} {version}\n{about}\n\n用法:\n  {usage}\n\n参数:\n{options}\n\n{after-help}",
+    after_help = r"示例:
+  · 指定目标 (-a/--addresses):
+      rustscan -a 192.168.0.1,example.com
+  · 指定端口 (-p/--ports):
+      rustscan -a 192.168.0.1 -p 80,443,1000-2000
+  · 控制扫描批量 (-b/--batch-size):
+      rustscan -a 192.168.0.1 -b 2000
+  · 调整超时 (-t/--timeout) 与重试 (--tries):
+      rustscan -a 192.168.0.1 -t 2500 --tries 3
+  · 指定解析器 (--resolver):
+      rustscan -a example.com --resolver 223.5.5.5,114.114.114.114
+  · 设置自定义 ulimit (-u/--ulimit):
+      rustscan -a 192.168.0.1 -u 65535
+  · 调整扫描顺序 (--scan-order):
+      rustscan -a 192.168.0.1 --scan-order serial
+  · 排除端口 (-e/--exclude-ports):
+      rustscan -a 192.168.0.1 -e 80,443,8000-8100
+  · 排除地址 (-x/--exclude-addresses):
+      rustscan -a targets.txt -x 10.0.0.0/24,example.org
+  · Grep 模式 (-g/--greppable):
+      rustscan -a 192.168.0.1 -g
+  · 无障碍模式 (--accessible):
+      rustscan -a 192.168.0.1 --accessible
+  · 诊断输出 (-d/--diagnostic):
+      rustscan -a 192.168.0.1 -d
+  · UDP 扫描 (--udp):
+      rustscan -a 192.168.0.1 --udp
+  · 指定 DNS/IP 输入文件:
+      rustscan -a targets.txt
+  · 结合排除与端口列表:
+      rustscan -a 192.168.0.1,192.168.0.2 -p 22,80-90 -e 23,25
+",
 )]
 #[allow(clippy::struct_excessive_bools)]
 /// 高速端口扫描器，采用 Rust 构建。
@@ -59,17 +118,13 @@ pub struct Opts {
     #[arg(short, long, value_delimiter = ',')]
     pub addresses: Vec<String>,
 
-    /// 以英文逗号分隔的端口列表，例如：80,443,8080。
+    /// 以英文逗号分隔的端口或端口范围列表，例如：80,443,8080 或 1-1000。
     #[arg(short, long, value_delimiter = ',')]
-    pub ports: Option<Vec<u16>>,
+    pub ports: Option<Vec<String>>,
 
     /// 端口范围，格式为 起始-结束，例如：1-1000。
-    #[arg(short, long, conflicts_with = "ports", value_parser = parse_range)]
+    #[arg(skip)]
     pub range: Option<PortRange>,
-
-    /// 隐藏启动横幅。
-    #[arg(long)]
-    pub no_banner: bool,
 
     /// Grep 模式：仅输出端口，方便重定向或 grep 处理。
     #[arg(short, long)]
@@ -92,6 +147,10 @@ pub struct Opts {
     #[arg(short, long, default_value = "1500")]
     pub timeout: u32,
 
+    /// 诊断模式：输出每个端口的实时延迟与当前使用的超时参数。
+    #[arg(short, long)]
+    pub diagnostic: bool,
+
     /// 端口被视为关闭前的重试次数，若设为 0 将自动调整为 1。
     #[arg(long, default_value = "1")]
     pub tries: u8,
@@ -100,8 +159,8 @@ pub struct Opts {
     #[arg(short, long)]
     pub ulimit: Option<u64>,
 
-    /// 扫描顺序：serial 顺序扫描，random 随机扫描。
-    #[arg(long, value_enum, ignore_case = true, default_value = "serial")]
+    /// 扫描顺序：serial 顺序扫描，random 随机扫描，high-frequency 高频端口优先。
+    #[arg(long, value_enum, ignore_case = true, default_value = "high-frequency")]
     pub scan_order: ScanOrder,
 
     /// 需要排除的端口列表（英文逗号分隔），例如：80,443,8080。
@@ -115,6 +174,10 @@ pub struct Opts {
     /// 启用 UDP 扫描模式，发现会响应的 UDP 端口。
     #[arg(long)]
     pub udp: bool,
+
+    /// 展开后的端口列表，在参数解析阶段填充。
+    #[arg(skip)]
+    pub resolved_ports: Option<Vec<u16>>,
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -130,7 +193,18 @@ impl Opts {
     {
         let mut opts = Opts::parse_from(args);
 
-        if opts.ports.is_none() && opts.range.is_none() {
+        if let Some(ref raw_ports) = opts.ports {
+            match parse_ports(raw_ports) {
+                Ok(values) => opts.resolved_ports = Some(values),
+                Err(message) => {
+                    Opts::command()
+                        .error(ErrorKind::InvalidValue, message)
+                        .exit();
+                }
+            }
+        }
+
+        if opts.resolved_ports.is_none() && opts.range.is_none() {
             opts.range = Some(PortRange {
                 start: LOWEST_PORT_NUMBER,
                 end: TOP_PORT_NUMBER,
@@ -150,15 +224,16 @@ impl Default for Opts {
             greppable: true,
             batch_size: 0,
             timeout: 0,
+            diagnostic: false,
             tries: 0,
             ulimit: None,
             accessible: false,
             resolver: None,
-            scan_order: ScanOrder::Serial,
-            no_banner: false,
+            scan_order: ScanOrder::HighFrequency,
             exclude_ports: None,
             exclude_addresses: None,
             udp: false,
+            resolved_ports: None,
         }
     }
 }
@@ -178,11 +253,25 @@ mod tests {
         let opts = Opts::default();
         assert_eq!(opts.range, None);
         assert!(opts.ports.is_none());
+        assert!(opts.resolved_ports.is_none());
 
         let parsed_opts = Opts::read_from(["rustscan"]);
         let range = parsed_opts.range.expect("默认解析应生成完整的端口范围");
 
         assert_eq!(range.start, super::LOWEST_PORT_NUMBER);
         assert_eq!(range.end, super::TOP_PORT_NUMBER);
+        assert!(parsed_opts.resolved_ports.is_none());
+    }
+
+    #[test]
+    fn ports_option_accepts_range_values() {
+        let opts = Opts::read_from(["rustscan", "-p", "80-82"]);
+        assert_eq!(opts.resolved_ports, Some(vec![80, 81, 82]));
+    }
+
+    #[test]
+    fn ports_option_accepts_mixed_values() {
+        let opts = Opts::read_from(["rustscan", "-p", "80,81-83,90"]);
+        assert_eq!(opts.resolved_ports, Some(vec![80, 81, 82, 83, 90]));
     }
 }

@@ -6,9 +6,8 @@ use rustscan::benchmark::{Benchmark, NamedTimer};
 use rustscan::input::Opts;
 use rustscan::port_strategy::PortStrategy;
 use rustscan::scanner::Scanner;
-use rustscan::{detail, funny_opening, warning};
+use rustscan::{detail, warning};
 
-use colorful::{Color, Colorful};
 use futures::executor::block_on;
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -44,10 +43,6 @@ fn main() {
 
     debug!("Main() `opts` arguments are {opts:?}");
 
-    if !opts.greppable && !opts.accessible && !opts.no_banner {
-        print_opening();
-    }
-
     let ips: Vec<IpAddr> = parse_addresses(&opts);
 
     if ips.is_empty() {
@@ -71,7 +66,8 @@ fn main() {
         Duration::from_millis(opts.timeout.into()),
         opts.tries,
         opts.greppable,
-        PortStrategy::pick(&opts.range, opts.ports, opts.scan_order),
+        PortStrategy::pick(&opts.range, opts.resolved_ports.clone(), opts.scan_order),
+        opts.diagnostic,
         opts.accessible,
         opts.exclude_ports.unwrap_or_default(),
         opts.udp,
@@ -92,6 +88,10 @@ fn main() {
             .push(socket.port());
     }
 
+    for ports in ports_per_ip.values_mut() {
+        ports.sort_unstable();
+    }
+
     for ip in ips {
         if ports_per_ip.contains_key(&ip) {
             continue;
@@ -101,7 +101,7 @@ fn main() {
         // means the scan couldn't find any open ports for it.
 
         let x = format!(
-            "未能在 {:?} 上发现开放端口，这通常是批量大小过大的结果。
+            "未能在 {:?} 上开放端口，这通常是批量大小过大的结果。
         \n* 当前批量大小为 {}，请使用 {} 或根据系统情况调小。
         \n 如果网络时延较高，也可以通过 'rustscan -t 2000' 将超时时间提升到 2000 毫秒（2 秒）。\n",
             ip, opts.batch_size, "'rustscan -b <批量大小> -a <IP 地址>'"
@@ -115,13 +115,14 @@ fn main() {
 
         // Ports are printed as 80,443 (comma separated without spaces).
         let ports_str = vec_str_ports.join(",");
+        let total_ports = ports.len();
 
         if opts.greppable {
-            println!("{} -> [{}]", &ip, ports_str);
+            println!("{} -> [{}] (total={})", &ip, ports_str, total_ports);
             continue;
         }
 
-        let message = format!("{ip} 的开放端口: [{ports_str}]");
+        let message = format!("{ip} 的开放端口 (共 {total_ports} 个): [{ports_str}]");
         detail!(message, opts.greppable, opts.accessible);
     }
 
@@ -132,20 +133,6 @@ fn main() {
     benchmarks.push(rustscan_bench);
     debug!("Benchmarks raw {benchmarks:?}");
     info!("{}", benchmarks.summary());
-}
-
-/// Prints the opening title of RustScan
-#[allow(clippy::items_after_statements, clippy::needless_raw_string_hashes)]
-fn print_opening() {
-    debug!("Printing opening");
-    let s = r#".----. .-. .-. .----..---.  .----. .---.   .--.  .-. .-.
-| {}  }| { } |{ {__ {_   _}{ {__  /  ___} / {} \ |  `| |
-| .-. \| {_} |.-._} } | |  .-._} }\     }/  /\  \| |\  |
-`-' `-'`-----'`----'  `-'  `----'  `---' `-'  `-'`-' `-'
-现代化的端口扫描器"#;
-
-    println!("{}", s.gradient(Color::Green).bold());
-    funny_opening!();
 }
 
 #[cfg(unix)]
@@ -217,9 +204,9 @@ fn infer_batch_size(opts: &Opts, ulimit: u64) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    use super::Opts;
     #[cfg(unix)]
     use super::{adjust_ulimit_size, infer_batch_size};
-    use super::{print_opening, Opts};
 
     #[test]
     #[cfg(unix)]
@@ -283,11 +270,5 @@ mod tests {
         let batch_size = infer_batch_size(&opts, 1_000_000);
 
         assert!(batch_size == opts.batch_size);
-    }
-
-    #[test]
-    fn test_print_opening_no_panic() {
-        // print opening should not panic
-        print_opening();
     }
 }

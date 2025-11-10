@@ -1,4 +1,5 @@
 //! Core functionality for actual scanning behaviour.
+use crate::detail;
 use crate::generated::get_parsed_data;
 use crate::port_strategy::PortStrategy;
 use log::debug;
@@ -11,12 +12,13 @@ use async_std::prelude::*;
 use async_std::{io, net::UdpSocket};
 use colored::Colorize;
 use futures::stream::FuturesUnordered;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::sync::{Arc, RwLock};
 use std::{
     collections::HashSet,
     net::{IpAddr, Shutdown, SocketAddr},
     num::NonZeroU8,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// The class for the scanner
@@ -35,8 +37,80 @@ pub struct Scanner {
     greppable: bool,
     port_strategy: PortStrategy,
     accessible: bool,
+    diagnostic: bool,
     exclude_ports: Vec<u16>,
     udp: bool,
+    host_states: Arc<RwLock<HashMap<IpAddr, HostAdaptiveState>>>,
+    socket_timeouts: Arc<RwLock<HashMap<SocketAddr, Duration>>>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct HostAdaptiveState {
+    pending_latencies: Vec<Duration>,
+    reference_latency: Option<Duration>,
+    current_timeout: Option<Duration>,
+}
+
+impl HostAdaptiveState {
+    fn has_override(&self) -> bool {
+        self.current_timeout.is_some()
+    }
+
+    fn current_timeout(&self, default: Duration) -> Duration {
+        self.current_timeout.unwrap_or(default)
+    }
+
+    fn scaled_timeout(latency: Duration) -> Duration {
+        let secs = (latency.as_secs_f64() * 2.0_f64).max(0.001);
+        Duration::from_secs_f64(secs)
+    }
+
+    fn record_latency(
+        &mut self,
+        default_timeout: Duration,
+        latency: Duration,
+    ) -> Option<(Duration, Duration)> {
+        if self.reference_latency.is_none() {
+            self.pending_latencies.push(latency);
+            if self.pending_latencies.len() < 3 {
+                return None;
+            }
+
+            self.pending_latencies.sort();
+            let median = self.pending_latencies[self.pending_latencies.len() / 2];
+            let new_timeout = Self::scaled_timeout(median);
+            let previous_timeout = self.current_timeout.unwrap_or(default_timeout);
+
+            self.reference_latency = Some(median);
+            self.current_timeout = Some(new_timeout);
+            self.pending_latencies.clear();
+
+            if new_timeout != previous_timeout {
+                return Some((previous_timeout, new_timeout));
+            }
+
+            return None;
+        }
+
+        let Some(reference_latency) = self.reference_latency else {
+            return None;
+        };
+
+        let threshold = reference_latency.as_secs_f64() * 1.5_f64;
+        if latency.as_secs_f64() > threshold {
+            let new_timeout = Self::scaled_timeout(latency);
+            let previous_timeout = self.current_timeout.unwrap_or(default_timeout);
+            if new_timeout > previous_timeout {
+                self.current_timeout = Some(new_timeout);
+                self.reference_latency = Some(latency);
+                return Some((previous_timeout, new_timeout));
+            } else {
+                self.reference_latency = Some(latency);
+            }
+        }
+
+        None
+    }
 }
 
 // Allowing too many arguments for clippy.
@@ -49,6 +123,7 @@ impl Scanner {
         tries: u8,
         greppable: bool,
         port_strategy: PortStrategy,
+        diagnostic: bool,
         accessible: bool,
         exclude_ports: Vec<u16>,
         udp: bool,
@@ -61,8 +136,85 @@ impl Scanner {
             port_strategy,
             ips: ips.iter().map(ToOwned::to_owned).collect(),
             accessible,
+            diagnostic,
             exclude_ports,
             udp,
+            host_states: Arc::new(RwLock::new(HashMap::new())),
+            socket_timeouts: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    fn has_timeout_override(&self, ip: IpAddr) -> bool {
+        self.host_states
+            .read()
+            .map(|states| {
+                states
+                    .get(&ip)
+                    .map_or(false, HostAdaptiveState::has_override)
+            })
+            .unwrap_or(false)
+    }
+
+    fn current_timeout_for_ip(&self, ip: IpAddr) -> Duration {
+        if let Ok(states) = self.host_states.read() {
+            if let Some(state) = states.get(&ip) {
+                return state.current_timeout(self.timeout);
+            }
+        }
+        self.timeout
+    }
+
+    fn current_timeout_for_socket(&self, socket: SocketAddr) -> Duration {
+        if let Ok(map) = self.socket_timeouts.read() {
+            if let Some(timeout) = map.get(&socket) {
+                return *timeout;
+            }
+        }
+
+        let fallback = self.current_timeout_for_ip(socket.ip());
+        if let Ok(mut map) = self.socket_timeouts.write() {
+            map.entry(socket).or_insert(fallback);
+        }
+        fallback
+    }
+
+    fn prepare_socket(&self, socket: SocketAddr) {
+        let timeout = self.current_timeout_for_ip(socket.ip());
+        if let Ok(mut map) = self.socket_timeouts.write() {
+            map.entry(socket).or_insert(timeout);
+        }
+    }
+
+    fn clear_socket_timeout(&self, socket: SocketAddr) {
+        if let Ok(mut map) = self.socket_timeouts.write() {
+            map.remove(&socket);
+        }
+    }
+
+    fn propagate_timeout_for_ip(&self, ip: IpAddr, timeout: Duration) {
+        if let Ok(mut map) = self.socket_timeouts.write() {
+            for (addr, value) in map.iter_mut() {
+                if addr.ip() == ip {
+                    *value = timeout;
+                }
+            }
+        }
+    }
+
+    fn update_timeout_after_success(&self, ip: IpAddr, latency: Duration) {
+        if let Ok(mut states) = self.host_states.write() {
+            let state = states.entry(ip).or_default();
+            if let Some((previous_timeout, adjusted_timeout)) =
+                state.record_latency(self.timeout, latency)
+            {
+                self.propagate_timeout_for_ip(ip, adjusted_timeout);
+
+                let from_ms = previous_timeout.as_secs_f64() * 1000.0;
+                let to_ms = adjusted_timeout.as_secs_f64() * 1000.0;
+                let message =
+                    format!("强化介入 IP {ip} 延迟从 {from_ms:.2} 优化至 {to_ms:.2} 毫秒");
+                detail!(message, self.greppable, self.accessible);
+            }
         }
     }
 
@@ -77,16 +229,55 @@ impl Scanner {
             .filter(|&port| !self.exclude_ports.contains(port))
             .copied()
             .collect();
+        let total_targets = self.ips.len().saturating_mul(ports.len());
+        detail!(
+            format!(
+                "计划扫描端口总数: {port_count} 个 (目标组合 {target_count} 个)",
+                port_count = ports.len(),
+                target_count = total_targets
+            ),
+            self.greppable,
+            self.accessible
+        );
         let mut socket_iterator: SocketIterator = SocketIterator::new(&self.ips, &ports);
         let mut open_sockets: Vec<SocketAddr> = Vec::new();
-        let mut ftrs = FuturesUnordered::new();
+        let mut ftrs: FuturesUnordered<_> = FuturesUnordered::new();
         let mut errors: HashSet<String> = HashSet::new();
         let udp_map = get_parsed_data();
+        let mut deferred: VecDeque<SocketAddr> = VecDeque::new();
+        let mut inflight_without_override: HashMap<IpAddr, usize> = HashMap::new();
 
-        for _ in 0..self.batch_size {
-            if let Some(socket) = socket_iterator.next() {
-                ftrs.push(self.scan_socket(socket, udp_map.clone()));
-            } else {
+        'initial_fill: while ftrs.len() < self.batch_size as usize {
+            let mut scheduled = false;
+            let attempts = deferred.len() + 1;
+            for _ in 0..attempts {
+                let next_socket = if let Some(socket) = deferred.pop_front() {
+                    Some(socket)
+                } else {
+                    socket_iterator.next()
+                };
+
+                let Some(socket) = next_socket else {
+                    break 'initial_fill;
+                };
+
+                let ip = socket.ip();
+                if !self.has_timeout_override(ip) {
+                    let entry = inflight_without_override.entry(ip).or_insert(0);
+                    if *entry >= 1 {
+                        deferred.push_back(socket);
+                        continue;
+                    }
+                    *entry += 1;
+                }
+
+                self.prepare_socket(socket);
+                ftrs.push(self.spawn_scan_task(socket, udp_map.clone()));
+                scheduled = true;
+                break;
+            }
+
+            if !scheduled {
                 break;
             }
         }
@@ -97,9 +288,18 @@ impl Scanner {
             &ports.len(),
             (self.ips.len() * ports.len()));
 
-        while let Some(result) = ftrs.next().await {
-            if let Some(socket) = socket_iterator.next() {
-                ftrs.push(self.scan_socket(socket, udp_map.clone()));
+        while let Some((ip, result)) = ftrs.next().await {
+            let mut remove_entry = false;
+            if let Some(count) = inflight_without_override.get_mut(&ip) {
+                if *count > 0 {
+                    *count -= 1;
+                }
+                if *count == 0 {
+                    remove_entry = true;
+                }
+            }
+            if remove_entry {
+                inflight_without_override.remove(&ip);
             }
 
             match result {
@@ -109,6 +309,41 @@ impl Scanner {
                     if errors.len() < self.ips.len() * 1000 {
                         errors.insert(error_string);
                     }
+                }
+            }
+
+            'refill: while ftrs.len() < self.batch_size as usize {
+                let mut scheduled = false;
+                let attempts = deferred.len() + 1;
+                for _ in 0..attempts {
+                    let next_socket = if let Some(socket) = deferred.pop_front() {
+                        Some(socket)
+                    } else {
+                        socket_iterator.next()
+                    };
+
+                    let Some(socket) = next_socket else {
+                        break 'refill;
+                    };
+
+                    let candidate_ip = socket.ip();
+                    if !self.has_timeout_override(candidate_ip) {
+                        let entry = inflight_without_override.entry(candidate_ip).or_insert(0);
+                        if *entry >= 1 {
+                            deferred.push_back(socket);
+                            continue;
+                        }
+                        *entry += 1;
+                    }
+
+                    self.prepare_socket(socket);
+                    ftrs.push(self.spawn_scan_task(socket, udp_map.clone()));
+                    scheduled = true;
+                    break;
+                }
+
+                if !scheduled {
+                    break;
                 }
             }
         }
@@ -131,6 +366,18 @@ impl Scanner {
     /// ```
     ///
     /// Note: `self` must contain `self.ip`.
+    fn spawn_scan_task(
+        &self,
+        socket: SocketAddr,
+        udp_map: BTreeMap<Vec<u16>, Vec<u8>>,
+    ) -> impl std::future::Future<Output = (IpAddr, io::Result<SocketAddr>)> + '_ {
+        let ip = socket.ip();
+        async move {
+            let result = self.scan_socket(socket, udp_map).await;
+            (ip, result)
+        }
+    }
+
     async fn scan_socket(
         &self,
         socket: SocketAddr,
@@ -142,8 +389,9 @@ impl Scanner {
 
         let tries = self.tries.get();
         for nr_try in 1..=tries {
-            match self.connect(socket).await {
-                Ok(tcp_stream) => {
+            let delay_used = self.current_timeout_for_socket(socket);
+            match self.connect(socket, delay_used).await {
+                Ok((tcp_stream, latency)) => {
                     debug!(
                         "Connection was successful, shutting down stream {}",
                         &socket
@@ -151,7 +399,10 @@ impl Scanner {
                     if let Err(e) = tcp_stream.shutdown(Shutdown::Both) {
                         debug!("Shutdown stream error {}", &e);
                     }
-                    self.fmt_ports(socket);
+                    self.fmt_ports(socket, latency, delay_used);
+                    self.update_timeout_after_success(socket.ip(), latency);
+
+                    self.clear_socket_timeout(socket);
 
                     debug!("Return Ok after {nr_try} tries");
                     return Ok(socket);
@@ -164,6 +415,7 @@ impl Scanner {
                     if nr_try == tries {
                         error_string.push(' ');
                         error_string.push_str(&socket.ip().to_string());
+                        self.clear_socket_timeout(socket);
                         return Err(io::Error::other(error_string));
                     }
                 }
@@ -186,13 +438,21 @@ impl Scanner {
 
         let tries = self.tries.get();
         for _ in 1..=tries {
-            match self.udp_scan(socket, &payload, self.timeout).await {
-                Ok(true) => return Ok(socket),
+            let timeout = self.current_timeout_for_socket(socket);
+            match self.udp_scan(socket, &payload, timeout).await {
+                Ok(true) => {
+                    self.clear_socket_timeout(socket);
+                    return Ok(socket);
+                }
                 Ok(false) => continue,
-                Err(e) => return Err(e),
+                Err(e) => {
+                    self.clear_socket_timeout(socket);
+                    return Err(e);
+                }
             }
         }
 
+        self.clear_socket_timeout(socket);
         Err(io::Error::other(format!(
             "UDP scan timed-out for all tries on socket {socket}"
         )))
@@ -208,17 +468,18 @@ impl Scanner {
     /// let ip = IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1));
     /// let socket = SocketAddr::new(ip, port);
     /// scanner.connect(socket);
-    /// // returns Result which is either Ok(stream) for port is open, or Er for port is closed.
+    /// // returns Result which is either Ok((stream, latency)) for port is open, or Err for port is closed.
     /// // Timeout occurs after self.timeout seconds
     /// ```
     ///
-    async fn connect(&self, socket: SocketAddr) -> io::Result<TcpStream> {
-        let stream = io::timeout(
-            self.timeout,
-            async move { TcpStream::connect(socket).await },
-        )
-        .await?;
-        Ok(stream)
+    async fn connect(
+        &self,
+        socket: SocketAddr,
+        timeout: Duration,
+    ) -> io::Result<(TcpStream, Duration)> {
+        let start = Instant::now();
+        let stream = io::timeout(timeout, async move { TcpStream::connect(socket).await }).await?;
+        Ok((stream, start.elapsed()))
     }
 
     /// Binds to a UDP socket so we can send and receive packets
@@ -270,12 +531,15 @@ impl Scanner {
                 let mut buf = [0u8; 1024];
 
                 udp_socket.connect(socket).await?;
+                let start = Instant::now();
                 udp_socket.send(payload).await?;
 
                 match io::timeout(wait, udp_socket.recv(&mut buf)).await {
                     Ok(size) => {
                         debug!("Received {size} bytes");
-                        self.fmt_ports(socket);
+                        let latency = start.elapsed();
+                        self.fmt_ports(socket, latency, wait);
+                        self.update_timeout_after_success(socket.ip(), latency);
                         Ok(true)
                     }
                     Err(e) => {
@@ -295,13 +559,30 @@ impl Scanner {
     }
 
     /// Formats and prints the port status
-    fn fmt_ports(&self, socket: SocketAddr) {
-        if !self.greppable {
-            if self.accessible {
-                println!("发现开放端口 {socket}");
+    fn fmt_ports(&self, socket: SocketAddr, latency: Duration, delay_used: Duration) {
+        if self.greppable {
+            return;
+        }
+
+        let latency_ms = latency.as_secs_f64() * 1_000.0;
+        let delay_ms = delay_used.as_secs_f64() * 1_000.0;
+
+        if self.accessible {
+            if self.diagnostic {
+                println!("开放 {socket} (延迟 {latency_ms:.2}ms, 使用延迟参数 {delay_ms:.2}ms)");
             } else {
-                println!("发现开放端口 {}", socket.to_string().purple());
+                println!("开放 {socket}");
             }
+            return;
+        }
+
+        if self.diagnostic {
+            println!(
+                "开放 {} (延迟 {latency_ms:.2}ms, 使用延迟参数 {delay_ms:.2}ms)",
+                socket.to_string().purple()
+            );
+        } else {
+            println!("开放 {}", socket.to_string().purple());
         }
     }
 }
@@ -329,6 +610,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             false,
@@ -353,6 +635,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             false,
@@ -376,6 +659,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             false,
@@ -398,6 +682,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             false,
@@ -423,6 +708,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             false,
@@ -447,6 +733,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             true,
@@ -471,6 +758,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             true,
@@ -494,6 +782,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             true,
@@ -516,6 +805,7 @@ mod tests {
             1,
             true,
             strategy,
+            false,
             true,
             vec![9000],
             true,
