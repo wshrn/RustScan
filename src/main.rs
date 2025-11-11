@@ -167,6 +167,8 @@ fn main() {
 }
 
 const MAX_TITLE_LENGTH: usize = 100;
+const MAX_TITLE_DISPLAY_LENGTH: usize = 60;
+const MAX_URL_DISPLAY_LENGTH: usize = 70;
 const EMPTY_TITLE: &str = "\"\"";
 const NO_TITLE_TEXT: &str = "无标题";
 const USER_AGENT_VALUE: &str =
@@ -228,25 +230,25 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
 
     let client_no_redirect = Arc::new(client_no_redirect);
     let client_follow_redirect = Arc::new(client_follow_redirect);
-    let discovered_urls = Arc::new(Mutex::new(BTreeSet::new()));
+    let http_findings = Arc::new(Mutex::new(Vec::new()));
 
     pool.scope(|scope| {
         for (ip, ports) in ports_per_ip {
             for &port in ports {
                 let client_no_redirect = Arc::clone(&client_no_redirect);
                 let client_follow_redirect = Arc::clone(&client_follow_redirect);
-                let discovered_urls = Arc::clone(&discovered_urls);
+                let findings = Arc::clone(&http_findings);
                 let ip = *ip;
                 scope.spawn(move |_| {
-                    if let Some(url) = probe_single_port(
+                    if let Some(finding) = probe_single_port(
                         ip,
                         port,
                         detection_timeout,
                         &client_no_redirect,
                         &client_follow_redirect,
                     ) {
-                        if let Ok(mut urls) = discovered_urls.lock() {
-                            urls.insert(url);
+                        if let Ok(mut urls) = findings.lock() {
+                            urls.push(finding);
                         }
                     }
                 });
@@ -254,9 +256,9 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
         }
     });
 
-    let discovered_urls = match Arc::try_unwrap(discovered_urls) {
+    let findings = match Arc::try_unwrap(http_findings) {
         Ok(mutex) => match mutex.into_inner() {
-            Ok(set) => set,
+            Ok(vec) => vec,
             Err(poisoned) => poisoned.into_inner(),
         },
         Err(arc) => match arc.lock() {
@@ -265,11 +267,19 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
         },
     };
 
-    if discovered_urls.is_empty() {
+    if findings.is_empty() {
         return;
     }
 
-    if let Err(error) = write_urls_file(&discovered_urls) {
+    let mut findings = findings;
+    findings.sort_by(|a, b| a.url.cmp(&b.url));
+    findings.dedup_by(|a, b| a.url == b.url);
+
+    print_http_findings(&findings, opts.accessible);
+
+    let urls: BTreeSet<String> = findings.iter().map(|finding| finding.url.clone()).collect();
+
+    if let Err(error) = write_urls_file(&urls) {
         warning!(
             format!("写入 urls.txt 失败: {error}"),
             opts.greppable,
@@ -284,7 +294,7 @@ fn probe_single_port(
     detection_timeout: Duration,
     client_no_redirect: &Client,
     client_follow_redirect: &Client,
-) -> Option<String> {
+) -> Option<HttpProbeFinding> {
     let mut url = initialize_url(ip, port, detection_timeout);
 
     let mut response = match fetch_url(client_no_redirect, &url) {
@@ -349,9 +359,14 @@ fn probe_single_port(
     let body_text = decode_body(&body[..preview_len]);
     let title = extract_title_from_body(&body_text);
 
-    println!("{url} {status_code} {length_str} {title}");
+    let length_display = human_readable_size(&length_str);
 
-    Some(url)
+    Some(HttpProbeFinding {
+        url,
+        status_code,
+        length_display,
+        title,
+    })
 }
 
 fn default_http_headers() -> HeaderMap {
@@ -466,6 +481,14 @@ fn check_http(ip: IpAddr, port: u16, timeout: Duration) -> bool {
     }
 }
 
+#[derive(Clone)]
+struct HttpProbeFinding {
+    url: String,
+    status_code: u16,
+    length_display: String,
+    title: String,
+}
+
 struct WebResponse {
     url: String,
     status_code: u16,
@@ -555,6 +578,179 @@ fn extract_title_from_body(body: &str) -> String {
     }
 
     NO_TITLE_TEXT.to_string()
+}
+
+fn print_http_findings(findings: &[HttpProbeFinding], accessible: bool) {
+    if findings.is_empty() {
+        return;
+    }
+
+    let display_items: Vec<(String, String, &HttpProbeFinding)> = findings
+        .iter()
+        .map(|finding| {
+            let url_display = truncate_with_ellipsis(&finding.url, MAX_URL_DISPLAY_LENGTH);
+            let title_display = truncate_with_ellipsis(&finding.title, MAX_TITLE_DISPLAY_LENGTH);
+            (url_display, title_display, finding)
+        })
+        .collect();
+
+    let url_width = display_items
+        .iter()
+        .map(|(url_display, _, _)| url_display.len())
+        .max()
+        .unwrap_or(3)
+        .max("URL".len());
+
+    let length_width = findings
+        .iter()
+        .map(|finding| finding.length_display.len())
+        .max()
+        .unwrap_or(1)
+        .max("大小".len());
+
+    let title_width = display_items
+        .iter()
+        .map(|(_, title_display, _)| title_display.len())
+        .max()
+        .unwrap_or("标题".len());
+
+    if accessible {
+        println!();
+        println!("HTTP 服务探测结果（共 {} 个）", findings.len());
+        println!(
+            "{:<url_width$}  {:>5}  {:>length_width$}  {:<title_width$}",
+            "URL",
+            "状态",
+            "大小",
+            "标题",
+            url_width = url_width,
+            length_width = length_width,
+            title_width = title_width
+        );
+        println!(
+            "{:-<url_width$}  {:-<5}  {:-<length_width$}  {:-<title_width$}",
+            "",
+            "",
+            "",
+            "",
+            url_width = url_width,
+            length_width = length_width,
+            title_width = title_width
+        );
+    } else {
+        println!();
+        println!(
+            "{}",
+            format!("HTTP 服务探测结果（共 {} 个）", findings.len()).bold()
+        );
+        println!(
+            "{:<url_width$}  {:>5}  {:>length_width$}  {:<title_width$}",
+            "URL",
+            "状态",
+            "大小",
+            "标题",
+            url_width = url_width,
+            length_width = length_width,
+            title_width = title_width
+        );
+        println!(
+            "{:-<url_width$}  {:-<5}  {:-<length_width$}  {:-<title_width$}",
+            "",
+            "",
+            "",
+            "",
+            url_width = url_width,
+            length_width = length_width,
+            title_width = title_width
+        );
+    }
+
+    for (url_display, title_display, finding) in display_items {
+        let url_column = format!("{:<url_width$}", url_display, url_width = url_width);
+        let url_column = if accessible {
+            url_column
+        } else {
+            format!("{}", url_column.cyan())
+        };
+
+        let status_column = format!("{:>5}", finding.status_code);
+        let status_column = stylize_status(status_column, finding.status_code, accessible);
+
+        let length_column = format!(
+            "{:>length_width$}",
+            finding.length_display,
+            length_width = length_width
+        );
+        let length_column = if accessible {
+            length_column
+        } else {
+            format!("{}", length_column.yellow())
+        };
+
+        let title_column = format!("{:<title_width$}", title_display, title_width = title_width);
+        let title_column = if accessible {
+            title_column
+        } else {
+            format!("{}", title_column.white())
+        };
+
+        println!("{url_column}  {status_column}  {length_column}  {title_column}");
+    }
+}
+
+fn stylize_status(status: String, code: u16, accessible: bool) -> String {
+    if accessible {
+        return status;
+    }
+
+    if (200..=299).contains(&code) {
+        format!("{}", status.green().bold())
+    } else if (300..=399).contains(&code) {
+        format!("{}", status.yellow().bold())
+    } else if (400..=599).contains(&code) {
+        format!("{}", status.red().bold())
+    } else {
+        format!("{}", status.white())
+    }
+}
+
+fn truncate_with_ellipsis(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+
+    if max_chars <= 1 {
+        return "…".to_string();
+    }
+
+    let mut truncated = text.chars().take(max_chars - 1).collect::<String>();
+    truncated.push('…');
+    truncated
+}
+
+fn human_readable_size(length: &str) -> String {
+    if let Ok(value) = length.parse::<u64>() {
+        return format_bytes(value);
+    }
+
+    length.to_string()
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit_index = 0;
+
+    while value >= 1024.0 && unit_index < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit_index += 1;
+    }
+
+    if unit_index == 0 {
+        format!("{} {}", bytes, UNITS[unit_index])
+    } else {
+        format!("{value:.2} {}", UNITS[unit_index])
+    }
 }
 
 fn write_urls_file(urls: &BTreeSet<String>) -> std::io::Result<()> {

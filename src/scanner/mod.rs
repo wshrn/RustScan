@@ -11,6 +11,7 @@ use async_std::prelude::*;
 use async_std::{io, net::UdpSocket};
 use colored::Colorize;
 use futures::stream::FuturesUnordered;
+use once_cell::sync::OnceCell;
 use std::collections::BTreeMap;
 use std::{
     collections::HashSet,
@@ -297,10 +298,25 @@ impl Scanner {
     /// Formats and prints the port status
     fn fmt_ports(&self, socket: SocketAddr) {
         if !self.greppable {
+            static PORT_SECTION_SHOWN: OnceCell<()> = OnceCell::new();
+
+            if PORT_SECTION_SHOWN.set(()).is_ok() {
+                let heading = "开放端口";
+                if self.accessible {
+                    println!();
+                    println!("{heading}:");
+                } else {
+                    println!();
+                    println!("{}", heading.bold());
+                }
+            }
+
+            let entry = format!("  • {socket}");
+
             if self.accessible {
-                println!("[*] {socket}");
+                println!("{entry}");
             } else {
-                println!("[*] {}", socket.to_string().purple());
+                println!("{}", entry.purple().bold());
             }
         }
     }
