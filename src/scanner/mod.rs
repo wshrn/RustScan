@@ -298,9 +298,9 @@ impl Scanner {
     fn fmt_ports(&self, socket: SocketAddr) {
         if !self.greppable {
             if self.accessible {
-                println!("发现开放端口 {socket}");
+                println!("[*] {socket}");
             } else {
-                println!("发现开放端口 {}", socket.to_string().purple());
+                println!("[*] {}", socket.to_string().purple());
             }
         }
     }
@@ -309,7 +309,7 @@ impl Scanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::{PortRange, ScanOrder};
+    use crate::input::{PortRange, PortSelection, ScanOrder};
     use async_std::task::block_on;
     use std::{net::IpAddr, time::Duration};
 
@@ -321,7 +321,7 @@ mod tests {
             start: 1,
             end: 1_000,
         };
-        let strategy = PortStrategy::pick(&Some(range), None, ScanOrder::Random);
+        let strategy = PortStrategy::pick(&PortSelection::Range(range), ScanOrder::Random);
         let scanner = Scanner::new(
             &addrs,
             10,
@@ -345,7 +345,7 @@ mod tests {
             start: 1,
             end: 1_000,
         };
-        let strategy = PortStrategy::pick(&Some(range), None, ScanOrder::Random);
+        let strategy = PortStrategy::pick(&PortSelection::Range(range), ScanOrder::Random);
         let scanner = Scanner::new(
             &addrs,
             10,
@@ -368,7 +368,7 @@ mod tests {
             start: 1,
             end: 1_000,
         };
-        let strategy = PortStrategy::pick(&Some(range), None, ScanOrder::Random);
+        let strategy = PortStrategy::pick(&PortSelection::Range(range), ScanOrder::Random);
         let scanner = Scanner::new(
             &addrs,
             10,
@@ -390,7 +390,7 @@ mod tests {
             start: 400,
             end: 445,
         };
-        let strategy = PortStrategy::pick(&Some(range), None, ScanOrder::Random);
+        let strategy = PortStrategy::pick(&PortSelection::Range(range), ScanOrder::Random);
         let scanner = Scanner::new(
             &addrs,
             10,
@@ -415,7 +415,7 @@ mod tests {
             start: 400,
             end: 600,
         };
-        let strategy = PortStrategy::pick(&Some(range), None, ScanOrder::Random);
+        let strategy = PortStrategy::pick(&PortSelection::Range(range), ScanOrder::Random);
         let scanner = Scanner::new(
             &addrs,
             10,
@@ -439,7 +439,7 @@ mod tests {
             start: 1,
             end: 1_000,
         };
-        let strategy = PortStrategy::pick(&Some(range), None, ScanOrder::Random);
+        let strategy = PortStrategy::pick(&PortSelection::Range(range), ScanOrder::Random);
         let scanner = Scanner::new(
             &addrs,
             10,
@@ -463,7 +463,7 @@ mod tests {
             start: 1,
             end: 1_000,
         };
-        let strategy = PortStrategy::pick(&Some(range), None, ScanOrder::Random);
+        let strategy = PortStrategy::pick(&PortSelection::Range(range), ScanOrder::Random);
         let scanner = Scanner::new(
             &addrs,
             10,
@@ -486,7 +486,7 @@ mod tests {
             start: 1,
             end: 1_000,
         };
-        let strategy = PortStrategy::pick(&Some(range), None, ScanOrder::Random);
+        let strategy = PortStrategy::pick(&PortSelection::Range(range), ScanOrder::Random);
         let scanner = Scanner::new(
             &addrs,
             10,
@@ -508,7 +508,7 @@ mod tests {
             start: 100,
             end: 150,
         };
-        let strategy = PortStrategy::pick(&Some(range), None, ScanOrder::Random);
+        let strategy = PortStrategy::pick(&PortSelection::Range(range), ScanOrder::Random);
         let scanner = Scanner::new(
             &addrs,
             10,
