@@ -6,7 +6,7 @@ use rustscan::benchmark::{Benchmark, NamedTimer};
 use rustscan::input::Opts;
 use rustscan::port_strategy::PortStrategy;
 use rustscan::scanner::Scanner;
-use rustscan::{detail, funny_opening, warning};
+use rustscan::{detail, warning};
 
 use colorful::{Color, Colorful};
 use encoding_rs::GB18030;
@@ -775,7 +775,6 @@ fn print_opening() {
 "#;
 
     println!("{}", s.gradient(Color::Green).bold());
-    funny_opening!();
 }
 
 #[cfg(unix)]
