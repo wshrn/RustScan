@@ -304,10 +304,10 @@ impl Scanner {
                 let heading = "开放端口";
                 if self.accessible {
                     println!();
-                    println!("{heading}:");
+                    println!("{heading}");
                 } else {
                     println!();
-                    println!("{}", heading.bold());
+                    println!("{}", heading.cyan().bold());
                 }
             }
 
