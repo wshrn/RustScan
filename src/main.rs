@@ -255,6 +255,8 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
     let client_no_redirect = Arc::new(client_no_redirect);
     let client_follow_redirect = Arc::new(client_follow_redirect);
     let http_findings = Arc::new(Mutex::new(Vec::new()));
+    let greppable = opts.greppable;
+    let accessible = opts.accessible;
 
     pool.scope(|scope| {
         for (ip, ports) in ports_per_ip {
@@ -262,6 +264,8 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
                 let client_no_redirect = Arc::clone(&client_no_redirect);
                 let client_follow_redirect = Arc::clone(&client_follow_redirect);
                 let findings = Arc::clone(&http_findings);
+                let greppable = greppable;
+                let accessible = accessible;
                 let ip = *ip;
                 scope.spawn(move |_| {
                     if let Some(finding) = probe_single_port(
@@ -271,6 +275,7 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
                         &client_no_redirect,
                         &client_follow_redirect,
                     ) {
+                        print_http_finding_realtime(&finding, greppable, accessible);
                         if let Ok(mut urls) = findings.lock() {
                             urls.push(finding);
                         }
@@ -391,6 +396,25 @@ fn probe_single_port(
         length_display,
         title,
     })
+}
+
+fn print_http_finding_realtime(finding: &HttpProbeFinding, greppable: bool, accessible: bool) {
+    let title_display = if finding.title.is_empty() {
+        NO_TITLE_TEXT
+    } else {
+        &finding.title
+    };
+
+    let message = format!(
+        "实时发现 HTTP 服务 -> URL: {} | 状态: {} | 大小: {} | 标题: {}",
+        finding.url, finding.status_code, finding.length_display, title_display
+    );
+
+    if greppable || accessible {
+        println!("{message}");
+    } else {
+        println!("{}", message.cyan());
+    }
 }
 
 fn default_http_headers() -> HeaderMap {
