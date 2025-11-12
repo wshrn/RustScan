@@ -15,8 +15,10 @@ use once_cell::sync::OnceCell;
 use std::collections::BTreeMap;
 use std::{
     collections::HashSet,
+    fmt,
     net::{IpAddr, Shutdown, SocketAddr},
     num::NonZeroU8,
+    sync::Arc,
     time::Duration,
 };
 
@@ -38,6 +40,33 @@ pub struct Scanner {
     accessible: bool,
     exclude_ports: Vec<u16>,
     udp: bool,
+    progress_reporter: Option<ProgressReporter>,
+}
+
+#[derive(Clone)]
+pub struct ProgressReporter {
+    callback: Arc<dyn Fn(usize, usize) + Send + Sync>,
+}
+
+impl ProgressReporter {
+    pub fn new<F>(callback: F) -> Self
+    where
+        F: Fn(usize, usize) + Send + Sync + 'static,
+    {
+        Self {
+            callback: Arc::new(callback),
+        }
+    }
+
+    pub fn report(&self, completed: usize, total: usize) {
+        (self.callback)(completed, total);
+    }
+}
+
+impl fmt::Debug for ProgressReporter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProgressReporter").finish()
+    }
 }
 
 // Allowing too many arguments for clippy.
@@ -64,7 +93,16 @@ impl Scanner {
             accessible,
             exclude_ports,
             udp,
+            progress_reporter: None,
         }
+    }
+
+    pub fn set_progress_reporter(&mut self, reporter: ProgressReporter) {
+        self.progress_reporter = Some(reporter);
+    }
+
+    pub fn clear_progress_reporter(&mut self) {
+        self.progress_reporter = None;
     }
 
     /// Runs scan_range with chunk sizes
@@ -83,6 +121,16 @@ impl Scanner {
         let mut ftrs = FuturesUnordered::new();
         let mut errors: HashSet<String> = HashSet::new();
         let udp_map = get_parsed_data();
+
+        let total_sockets = self.ips.len() * ports.len();
+        if total_sockets == 0 {
+            if let Some(progress_reporter) = &self.progress_reporter {
+                progress_reporter.report(0, 0);
+            }
+            return open_sockets;
+        }
+
+        let mut completed_sockets: usize = 0;
 
         for _ in 0..self.batch_size {
             if let Some(socket) = socket_iterator.next() {
@@ -111,6 +159,11 @@ impl Scanner {
                         errors.insert(error_string);
                     }
                 }
+            }
+
+            completed_sockets += 1;
+            if let Some(progress_reporter) = &self.progress_reporter {
+                progress_reporter.report(completed_sockets, total_sockets);
             }
         }
         debug!("Typical socket connection errors {errors:?}");

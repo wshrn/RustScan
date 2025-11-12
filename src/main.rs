@@ -5,12 +5,13 @@
 use rustscan::benchmark::{Benchmark, NamedTimer};
 use rustscan::input::Opts;
 use rustscan::port_strategy::PortStrategy;
-use rustscan::scanner::Scanner;
+use rustscan::scanner::{ProgressReporter, Scanner};
 use rustscan::{detail, warning};
 
 use colorful::{Color, Colorful};
 use encoding_rs::GB18030;
 use futures::executor::block_on;
+use indicatif::{ProgressBar, ProgressStyle};
 use native_tls::TlsConnector;
 use once_cell::sync::OnceCell;
 use rayon::ThreadPoolBuilder;
@@ -81,23 +82,63 @@ fn main() {
     let batch_size: u16 = opts.batch_size;
 
     let exclude_ports = opts.exclude_ports.clone().unwrap_or_default();
+    let port_strategy = PortStrategy::pick(&opts.ports, opts.scan_order);
+    let filtered_port_count = port_strategy
+        .order()
+        .into_iter()
+        .filter(|port| !exclude_ports.contains(port))
+        .count();
+    let total_port_targets = filtered_port_count * ips.len();
 
-    let scanner = Scanner::new(
+    let mut scanner = Scanner::new(
         &ips,
         batch_size,
         Duration::from_millis(opts.timeout.into()),
         opts.tries,
         opts.greppable,
-        PortStrategy::pick(&opts.ports, opts.scan_order),
+        port_strategy,
         opts.accessible,
         exclude_ports,
         opts.udp,
     );
+
+    let portscan_progress_bar = if total_port_targets > 0 && !opts.greppable {
+        Some(create_progress_bar(
+            total_port_targets as u64,
+            "端口扫描进度",
+            opts.accessible,
+        ))
+    } else {
+        None
+    };
+
+    if let Some(progress_bar) = &portscan_progress_bar {
+        let progress_bar = progress_bar.clone();
+        scanner.set_progress_reporter(ProgressReporter::new(move |completed, total| {
+            if total == 0 {
+                progress_bar.set_position(0);
+                return;
+            }
+
+            let length = progress_bar.length().unwrap_or(total as u64);
+            let capped_position = (completed as u64).min(length);
+            progress_bar.set_position(capped_position);
+            if completed >= total {
+                progress_bar.set_position(length);
+            }
+        }));
+    }
     debug!("Scanner finished building: {scanner:?}");
 
     let portscan_start = Instant::now();
     let mut portscan_bench = NamedTimer::start("端口扫描");
     let scan_result = block_on(scanner.run());
+
+    if let Some(progress_bar) = portscan_progress_bar {
+        if !progress_bar.is_finished() {
+            progress_bar.finish_with_message("端口扫描完成");
+        }
+    }
     portscan_bench.end();
     benchmarks.push(portscan_bench);
 
@@ -200,10 +241,33 @@ const USER_AGENT_VALUE: &str =
 const ACCEPT_HEADER_VALUE: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 const THREAD_NAME_PREFIX: &str = "http-probe";
 
+fn create_progress_bar(total: u64, message: &str, accessible: bool) -> ProgressBar {
+    let progress_bar = ProgressBar::new(total);
+    let template = if accessible {
+        "{msg} [{bar:40}] {pos:>5}/{len:<5} {percent:>3}%"
+    } else {
+        "{msg} {wide_bar:.cyan/blue} {pos:>5}/{len:<5} {percent:>3}%"
+    };
+
+    let style =
+        ProgressStyle::with_template(template).unwrap_or_else(|_| ProgressStyle::default_bar());
+    let style = if accessible {
+        style.progress_chars("=>-")
+    } else {
+        style.progress_chars("█▓░")
+    };
+
+    progress_bar.set_style(style);
+    progress_bar.set_message(message.to_string());
+    progress_bar
+}
+
 fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
     if ports_per_ip.is_empty() {
         return;
     }
+
+    let total_http_targets: usize = ports_per_ip.values().map(|ports| ports.len()).sum();
 
     let timeout_secs = opts.http_timeout.max(1);
     let request_timeout = Duration::from_secs(timeout_secs);
@@ -258,6 +322,17 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
     let greppable = opts.greppable;
     let accessible = opts.accessible;
 
+    let progress_bar = if greppable || total_http_targets == 0 {
+        None
+    } else {
+        Some(create_progress_bar(
+            total_http_targets as u64,
+            "HTTP 探测进度",
+            accessible,
+        ))
+    };
+    let progress_bar_for_threads = progress_bar.clone();
+
     pool.scope(|scope| {
         for (ip, ports) in ports_per_ip {
             for &port in ports {
@@ -267,6 +342,7 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
                 let greppable = greppable;
                 let accessible = accessible;
                 let ip = *ip;
+                let progress_bar = progress_bar_for_threads.clone();
                 scope.spawn(move |_| {
                     if let Some(finding) = probe_single_port(
                         ip,
@@ -280,10 +356,20 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
                             urls.push(finding);
                         }
                     }
+
+                    if let Some(pb) = progress_bar {
+                        pb.inc(1);
+                    }
                 });
             }
         }
     });
+
+    if let Some(pb) = &progress_bar {
+        if !pb.is_finished() {
+            pb.finish_with_message("HTTP 探测完成");
+        }
+    }
 
     let findings = match Arc::try_unwrap(http_findings) {
         Ok(mutex) => match mutex.into_inner() {
