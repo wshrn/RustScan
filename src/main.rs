@@ -11,7 +11,7 @@ use rustscan::{detail, warning};
 use colorful::{Color, Colorful};
 use encoding_rs::GB18030;
 use futures::executor::block_on;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use native_tls::TlsConnector;
 use once_cell::sync::OnceCell;
 use rayon::ThreadPoolBuilder;
@@ -25,6 +25,7 @@ use reqwest::redirect::Policy;
 use reqwest::Url;
 use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
+use std::io::IsTerminal;
 use std::io::{BufWriter, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::string::ToString;
@@ -135,9 +136,7 @@ fn main() {
     let scan_result = block_on(scanner.run());
 
     if let Some(progress_bar) = portscan_progress_bar {
-        if !progress_bar.is_finished() {
-            progress_bar.finish_with_message("端口扫描完成");
-        }
+        progress_bar.finish_and_clear();
     }
     portscan_bench.end();
     benchmarks.push(portscan_bench);
@@ -242,7 +241,13 @@ const ACCEPT_HEADER_VALUE: &str = "text/html,application/xhtml+xml,application/x
 const THREAD_NAME_PREFIX: &str = "http-probe";
 
 fn create_progress_bar(total: u64, message: &str, accessible: bool) -> ProgressBar {
-    let progress_bar = ProgressBar::new(total);
+    let draw_target = if std::io::stderr().is_terminal() {
+        ProgressDrawTarget::stderr_with_hz(20)
+    } else {
+        ProgressDrawTarget::hidden()
+    };
+
+    let progress_bar = ProgressBar::with_draw_target(total, draw_target);
     let template = if accessible {
         "{msg} [{bar:40}] {pos:>5}/{len:<5} {percent:>3}%"
     } else {
@@ -366,9 +371,7 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
     });
 
     if let Some(pb) = &progress_bar {
-        if !pb.is_finished() {
-            pb.finish_with_message("HTTP 探测完成");
-        }
+        pb.finish_and_clear();
     }
 
     let findings = match Arc::try_unwrap(http_findings) {
