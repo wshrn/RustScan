@@ -167,7 +167,7 @@ pub struct Opts {
     /// 端口扫描批量大小，决定一次同时扫描的端口数量，受系统文件句柄上限影响。
     /// 若设置为 65535 将同时扫描所有端口，但操作系统可能无法支持。
     /// 示例：`-b 3500`。
-    #[arg(short, long, default_value = "4500")]
+    #[arg(short, long, default_value = "1200")]
     pub batch_size: u16,
 
     /// 端口判定为关闭前的超时时长（毫秒）。

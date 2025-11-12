@@ -113,23 +113,6 @@ fn main() {
         ports.sort_unstable();
     }
 
-    for ip in ips {
-        if ports_per_ip.contains_key(&ip) {
-            continue;
-        }
-
-        // If we got here it means the IP was not found within the HashMap, this
-        // means the scan couldn't find any open ports for it.
-
-        let x = format!(
-            "未能在 {:?} 上发现开放端口，这通常是批量大小过大的结果。
-        \n* 当前批量大小为 {}，请使用 {} 或根据系统情况调小。
-        \n 如果网络时延较高，也可以通过 'rustscan -t 2000' 将超时时间提升到 2000 毫秒（2 秒）。\n",
-            ip, opts.batch_size, "'rustscan -b <批量大小> -a <IP 地址>'"
-        );
-        warning!(x, opts.greppable, opts.accessible);
-    }
-
     let mut reporting_bench = NamedTimer::start("结果汇总");
     probe_web_services(&ports_per_ip, &opts);
 
@@ -146,13 +129,17 @@ fn main() {
             continue;
         }
 
-        let message = format!("[~] {ip} 的开放端口: [{ports_str}]");
-        detail!(message, opts.greppable, opts.accessible);
+        let heading = format!("{ip} 的端口扫描结果");
+        detail!(heading, opts.greppable, opts.accessible);
 
-        let summary_message = format!("开放端口总数: {open_count}");
+        let ports_message = format!("    ├─ 开放端口: [{ports_str}]");
+        let summary_message = format!("    └─ 开放端口总数: {open_count}");
+
         if opts.accessible {
+            println!("{ports_message}");
             println!("{summary_message}");
         } else {
+            println!("{}", ports_message.cyan());
             println!("{}", summary_message.cyan());
         }
     }
