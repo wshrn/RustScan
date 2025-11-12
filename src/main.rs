@@ -28,7 +28,7 @@ use std::io::{BufWriter, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::string::ToString;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rustscan::address::parse_addresses;
 
@@ -95,12 +95,15 @@ fn main() {
     );
     debug!("Scanner finished building: {scanner:?}");
 
+    let portscan_start = Instant::now();
     let mut portscan_bench = NamedTimer::start("端口扫描");
     let scan_result = block_on(scanner.run());
     portscan_bench.end();
     benchmarks.push(portscan_bench);
 
-    let mut ports_per_ip = HashMap::new();
+    let scan_duration_secs = portscan_start.elapsed().as_secs_f64();
+
+    let mut ports_per_ip: HashMap<IpAddr, Vec<u16>> = HashMap::new();
 
     for socket in scan_result {
         ports_per_ip
@@ -113,34 +116,68 @@ fn main() {
         ports.sort_unstable();
     }
 
+    if opts.greppable {
+        println!("扫描耗时：{scan_duration_secs:.2}秒");
+    } else {
+        if !opts.accessible && !ports_per_ip.is_empty() {
+            println!();
+        }
+        let prefix = if opts.accessible { "" } else { " " };
+        let duration_message = format!("{prefix}扫描耗时：{scan_duration_secs:.2}秒");
+        detail!(duration_message, opts.greppable, opts.accessible);
+    }
+
     let mut reporting_bench = NamedTimer::start("结果汇总");
     probe_web_services(&ports_per_ip, &opts);
 
-    for (ip, ports) in &ports_per_ip {
-        let vec_str_ports: Vec<String> = ports.iter().map(ToString::to_string).collect();
+    let mut all_ports: Vec<u16> = ports_per_ip
+        .values()
+        .flat_map(|ports| ports.iter().copied())
+        .collect();
+    all_ports.sort_unstable();
+    all_ports.dedup();
 
-        // Ports are printed as 80,443 (comma separated without spaces).
-        let ports_str = vec_str_ports.join(",");
-        let open_count = ports.len();
-
-        if opts.greppable {
-            println!("{} -> [{}]", &ip, ports_str);
-            println!("开放端口总数: {open_count}");
-            continue;
+    if !ports_per_ip.is_empty() {
+        if !opts.greppable && !opts.accessible {
+            println!();
         }
 
-        let heading = format!("{ip} 的端口扫描结果");
-        detail!(heading, opts.greppable, opts.accessible);
+        let mut ordered_ips: Vec<IpAddr> = ports_per_ip.keys().copied().collect();
+        ordered_ips.sort();
 
-        let ports_message = format!("    ├─ 开放端口: [{ports_str}]");
-        let summary_message = format!("    └─ 开放端口总数: {open_count}");
+        for ip in ordered_ips {
+            if let Some(ports) = ports_per_ip.get(&ip) {
+                let vec_str_ports: Vec<String> = ports.iter().map(ToString::to_string).collect();
 
-        if opts.accessible {
-            println!("{ports_message}");
-            println!("{summary_message}");
+                // Ports are printed as 80,443 (comma separated without spaces).
+                let ports_str = vec_str_ports.join(",");
+                let open_count = ports.len();
+
+                if opts.greppable {
+                    println!("{ip} 总端口数（{open_count}）: [{ports_str}]");
+                    continue;
+                }
+
+                let prefix = if opts.accessible { "" } else { " " };
+                let heading = format!("{prefix}{ip} 总端口数（{open_count}）: [{ports_str}]");
+                detail!(heading, opts.greppable, opts.accessible);
+            }
+        }
+
+        let all_ports_str = all_ports
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let total_open_ports = all_ports.len();
+
+        if opts.greppable {
+            println!("总计开放端口数（{total_open_ports}）：[{all_ports_str}]");
         } else {
-            println!("{}", ports_message.cyan());
-            println!("{}", summary_message.cyan());
+            let prefix = if opts.accessible { "" } else { " " };
+            let summary =
+                format!("{prefix}总计开放端口数（{total_open_ports}）：[{all_ports_str}]");
+            detail!(summary, opts.greppable, opts.accessible);
         }
     }
 
@@ -572,8 +609,11 @@ fn print_http_findings(findings: &[HttpProbeFinding], accessible: bool) {
         return;
     }
 
-    let display_items: Vec<(String, String, &HttpProbeFinding)> = findings
-        .iter()
+    let mut ordered_findings: Vec<&HttpProbeFinding> = findings.iter().collect();
+    ordered_findings.sort_by(|a, b| a.url.cmp(&b.url));
+
+    let display_items: Vec<(String, String, &HttpProbeFinding)> = ordered_findings
+        .into_iter()
         .map(|finding| {
             let url_display = truncate_with_ellipsis(&finding.url, MAX_URL_DISPLAY_LENGTH);
             let title_display = truncate_with_ellipsis(&finding.title, MAX_TITLE_DISPLAY_LENGTH);
@@ -601,55 +641,51 @@ fn print_http_findings(findings: &[HttpProbeFinding], accessible: bool) {
         .max()
         .unwrap_or("标题".len());
 
+    let status_width = 5usize;
+
+    let separator_char = if accessible { '-' } else { '─' };
+    let url_rule: String = std::iter::repeat(separator_char).take(url_width).collect();
+    let status_rule: String = std::iter::repeat(separator_char)
+        .take(status_width)
+        .collect();
+    let length_rule: String = std::iter::repeat(separator_char)
+        .take(length_width)
+        .collect();
+    let title_rule: String = std::iter::repeat(separator_char)
+        .take(title_width)
+        .collect();
+
+    let header_row = format!(
+        "{:<url_width$}  {:>status_width$}  {:>length_width$}  {:<title_width$}",
+        "URL",
+        "状态",
+        "大小",
+        "标题",
+        url_width = url_width,
+        status_width = status_width,
+        length_width = length_width,
+        title_width = title_width
+    );
+
+    let separator_row = format!(
+        "{url_rule}  {status_rule}  {length_rule}  {title_rule}",
+        url_rule = url_rule,
+        status_rule = status_rule,
+        length_rule = length_rule,
+        title_rule = title_rule
+    );
+
+    println!();
+
     if accessible {
-        println!();
         println!("HTTP 服务探测结果（共 {} 个）", findings.len());
-        println!(
-            "{:<url_width$}  {:>5}  {:>length_width$}  {:<title_width$}",
-            "URL",
-            "状态",
-            "大小",
-            "标题",
-            url_width = url_width,
-            length_width = length_width,
-            title_width = title_width
-        );
-        println!(
-            "{:-<url_width$}  {:-<5}  {:-<length_width$}  {:-<title_width$}",
-            "",
-            "",
-            "",
-            "",
-            url_width = url_width,
-            length_width = length_width,
-            title_width = title_width
-        );
+        println!("{header_row}");
+        println!("{separator_row}");
     } else {
-        println!();
-        println!(
-            "{}",
-            format!("HTTP 服务探测结果（共 {} 个）", findings.len()).bold()
-        );
-        println!(
-            "{:<url_width$}  {:>5}  {:>length_width$}  {:<title_width$}",
-            "URL",
-            "状态",
-            "大小",
-            "标题",
-            url_width = url_width,
-            length_width = length_width,
-            title_width = title_width
-        );
-        println!(
-            "{:-<url_width$}  {:-<5}  {:-<length_width$}  {:-<title_width$}",
-            "",
-            "",
-            "",
-            "",
-            url_width = url_width,
-            length_width = length_width,
-            title_width = title_width
-        );
+        let heading = format!("HTTP 服务探测结果（共 {} 个）", findings.len());
+        println!("{}", heading.cyan().bold());
+        println!("{}", header_row.white().bold());
+        println!("{separator_row}");
     }
 
     for (url_display, title_display, finding) in display_items {
@@ -660,7 +696,11 @@ fn print_http_findings(findings: &[HttpProbeFinding], accessible: bool) {
             format!("{}", url_column.cyan())
         };
 
-        let status_column = format!("{:>5}", finding.status_code);
+        let status_column = format!(
+            "{:>status_width$}",
+            finding.status_code,
+            status_width = status_width
+        );
         let status_column = stylize_status(status_column, finding.status_code, accessible);
 
         let length_column = format!(
