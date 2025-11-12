@@ -113,23 +113,6 @@ fn main() {
         ports.sort_unstable();
     }
 
-    for ip in ips {
-        if ports_per_ip.contains_key(&ip) {
-            continue;
-        }
-
-        // If we got here it means the IP was not found within the HashMap, this
-        // means the scan couldn't find any open ports for it.
-
-        let x = format!(
-            "未能在 {:?} 上发现开放端口，这通常是批量大小过大的结果。
-        \n* 当前批量大小为 {}，请使用 {} 或根据系统情况调小。
-        \n 如果网络时延较高，也可以通过 'rustscan -t 2000' 将超时时间提升到 2000 毫秒（2 秒）。\n",
-            ip, opts.batch_size, "'rustscan -b <批量大小> -a <IP 地址>'"
-        );
-        warning!(x, opts.greppable, opts.accessible);
-    }
-
     let mut reporting_bench = NamedTimer::start("结果汇总");
     probe_web_services(&ports_per_ip, &opts);
 
