@@ -11,7 +11,7 @@ use rustscan::{detail, warning};
 use colorful::{Color, Colorful};
 use encoding_rs::GB18030;
 use futures::executor::block_on;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle, Term};
 use native_tls::TlsConnector;
 use once_cell::sync::OnceCell;
 use rayon::ThreadPoolBuilder;
@@ -241,6 +241,12 @@ const THREAD_NAME_PREFIX: &str = "http-probe";
 
 fn create_progress_bar(total: u64, message: &str, accessible: bool) -> ProgressBar {
     let progress_bar = ProgressBar::new(total);
+    if !Term::stderr().is_term() {
+        progress_bar.set_draw_target(ProgressDrawTarget::hidden());
+        progress_bar.set_message(message.to_string());
+        return progress_bar;
+    }
+
     let template = if accessible {
         "{msg} [{bar:40}] {pos:>5}/{len:<5} {percent:>3}%"
     } else {
