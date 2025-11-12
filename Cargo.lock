@@ -1868,6 +1868,7 @@ dependencies = [
  "clap",
  "colored",
  "colorful",
+ "console",
  "criterion",
  "encoding_rs",
  "env_logger",
