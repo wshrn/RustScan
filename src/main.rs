@@ -12,7 +12,7 @@ use colorful::{Color, Colorful};
 use console::Term;
 use encoding_rs::GB18030;
 use futures::executor::block_on;
-use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressFinish, ProgressStyle};
 use native_tls::TlsConnector;
 use once_cell::sync::OnceCell;
 use rayon::ThreadPoolBuilder;
@@ -42,6 +42,8 @@ const DEFAULT_FILE_DESCRIPTORS_LIMIT: u64 = 8000;
 // Safest batch size based on experimentation
 const AVERAGE_BATCH_SIZE: u16 = 3000;
 const PORTSCAN_PROGRESS_UPDATE_INTERVAL_SECS: u64 = 8;
+const PORTSCAN_PROGRESS_DRAW_HZ: u8 = 1;
+const HTTP_PROGRESS_DRAW_HZ: u8 = 10;
 
 #[macro_use]
 extern crate log;
@@ -109,6 +111,7 @@ fn main() {
             total_port_targets as u64,
             "端口扫描进度",
             opts.accessible,
+            PORTSCAN_PROGRESS_DRAW_HZ,
         ))
     } else {
         None
@@ -269,8 +272,8 @@ const USER_AGENT_VALUE: &str =
 const ACCEPT_HEADER_VALUE: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 const THREAD_NAME_PREFIX: &str = "http-probe";
 
-fn create_progress_bar(total: u64, message: &str, accessible: bool) -> ProgressBar {
-    let progress_bar = ProgressBar::new(total);
+fn create_progress_bar(total: u64, message: &str, accessible: bool, draw_hz: u8) -> ProgressBar {
+    let progress_bar = ProgressBar::new(total).with_finish(ProgressFinish::AndClear);
 
     if Term::stderr().is_term() {
         let template = if accessible {
@@ -288,6 +291,7 @@ fn create_progress_bar(total: u64, message: &str, accessible: bool) -> ProgressB
         };
 
         progress_bar.set_style(style);
+        progress_bar.set_draw_target(ProgressDrawTarget::stderr_with_hz(draw_hz));
     } else {
         progress_bar.set_draw_target(ProgressDrawTarget::hidden());
     }
@@ -363,6 +367,7 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
             total_http_targets as u64,
             "HTTP 探测进度",
             accessible,
+            HTTP_PROGRESS_DRAW_HZ,
         ))
     };
     let progress_bar_for_threads = progress_bar.clone();
