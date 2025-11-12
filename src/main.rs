@@ -390,7 +390,14 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
                         &client_no_redirect,
                         &client_follow_redirect,
                     ) {
-                        print_http_finding_realtime(&finding, greppable, accessible);
+                        let status_message = format_http_finding_status(&finding);
+
+                        if let Some(pb) = &progress_bar {
+                            pb.set_message(format!("HTTP 探测进度 | {status_message}"));
+                        } else {
+                            emit_http_finding_line(&status_message, greppable, accessible);
+                        }
+
                         if let Ok(mut urls) = findings.lock() {
                             urls.push(finding);
                         }
@@ -521,23 +528,25 @@ fn probe_single_port(
     })
 }
 
-fn print_http_finding_realtime(finding: &HttpProbeFinding, greppable: bool, accessible: bool) {
+fn emit_http_finding_line(message: &str, greppable: bool, accessible: bool) {
+    if greppable || accessible {
+        println!("{message}");
+    } else {
+        println!("{}", message.cyan());
+    }
+}
+
+fn format_http_finding_status(finding: &HttpProbeFinding) -> String {
     let title_display = if finding.title.is_empty() {
         NO_TITLE_TEXT
     } else {
         &finding.title
     };
 
-    let message = format!(
+    format!(
         "实时发现 HTTP 服务 -> URL: {} | 状态: {} | 大小: {} | 标题: {}",
         finding.url, finding.status_code, finding.length_display, title_display
-    );
-
-    if greppable || accessible {
-        println!("{message}");
-    } else {
-        println!("{}", message.cyan());
-    }
+    )
 }
 
 fn default_http_headers() -> HeaderMap {
