@@ -78,7 +78,7 @@ fn main() {
     let batch_size: u16 = infer_batch_size(&opts, adjust_ulimit_size(&opts));
 
     #[cfg(not(unix))]
-    let batch_size: u16 = AVERAGE_BATCH_SIZE;
+    let batch_size: u16 = opts.batch_size;
 
     let exclude_ports = opts.exclude_ports.clone().unwrap_or_default();
 
