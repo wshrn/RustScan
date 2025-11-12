@@ -41,6 +41,7 @@ extern crate colorful;
 const DEFAULT_FILE_DESCRIPTORS_LIMIT: u64 = 8000;
 // Safest batch size based on experimentation
 const AVERAGE_BATCH_SIZE: u16 = 3000;
+const PORTSCAN_PROGRESS_UPDATE_INTERVAL_SECS: u64 = 8;
 
 #[macro_use]
 extern crate log;
@@ -115,17 +116,38 @@ fn main() {
 
     if let Some(progress_bar) = &portscan_progress_bar {
         let progress_bar = progress_bar.clone();
-        scanner.set_progress_reporter(ProgressReporter::new(move |completed, total| {
-            if total == 0 {
-                progress_bar.set_position(0);
-                return;
-            }
+        let update_interval = Duration::from_secs(PORTSCAN_PROGRESS_UPDATE_INTERVAL_SECS);
+        let last_draw_time = Arc::new(Mutex::new(Instant::now().saturating_sub(update_interval)));
 
-            let length = progress_bar.length().unwrap_or(total as u64);
-            let capped_position = (completed as u64).min(length);
-            progress_bar.set_position(capped_position);
-            if completed >= total {
-                progress_bar.set_position(length);
+        scanner.set_progress_reporter(ProgressReporter::new({
+            let last_draw_time = Arc::clone(&last_draw_time);
+            move |completed, total| {
+                if total == 0 {
+                    let now = Instant::now();
+                    if let Ok(mut last) = last_draw_time.lock() {
+                        if now.duration_since(*last) >= update_interval {
+                            progress_bar.set_position(0);
+                            *last = now;
+                        }
+                    }
+                    return;
+                }
+
+                let length = progress_bar.length().unwrap_or(total as u64);
+                let capped_position = (completed as u64).min(length);
+                let target_position = if completed >= total {
+                    length
+                } else {
+                    capped_position
+                };
+
+                let now = Instant::now();
+                if let Ok(mut last) = last_draw_time.lock() {
+                    if completed >= total || now.duration_since(*last) >= update_interval {
+                        progress_bar.set_position(target_position);
+                        *last = now;
+                    }
+                }
             }
         }));
     }
