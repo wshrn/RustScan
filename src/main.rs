@@ -135,9 +135,7 @@ fn main() {
     let scan_result = block_on(scanner.run());
 
     if let Some(progress_bar) = portscan_progress_bar {
-        if !progress_bar.is_finished() {
-            progress_bar.finish_and_clear();
-        }
+        progress_bar.finish_and_clear();
     }
     portscan_bench.end();
     benchmarks.push(portscan_bench);
@@ -366,9 +364,7 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
     });
 
     if let Some(pb) = &progress_bar {
-        if !pb.is_finished() {
-            pb.finish_and_clear();
-        }
+        pb.finish_and_clear();
     }
 
     let findings = match Arc::try_unwrap(http_findings) {
