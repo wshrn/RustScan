@@ -117,7 +117,7 @@ fn main() {
     if let Some(progress_bar) = &portscan_progress_bar {
         let progress_bar = progress_bar.clone();
         let update_interval = Duration::from_secs(PORTSCAN_PROGRESS_UPDATE_INTERVAL_SECS);
-        let last_draw_time = Arc::new(Mutex::new(Instant::now().saturating_sub(update_interval)));
+        let last_draw_time = Arc::new(Mutex::new(None::<Instant>));
 
         scanner.set_progress_reporter(ProgressReporter::new({
             let last_draw_time = Arc::clone(&last_draw_time);
@@ -125,9 +125,12 @@ fn main() {
                 if total == 0 {
                     let now = Instant::now();
                     if let Ok(mut last) = last_draw_time.lock() {
-                        if now.duration_since(*last) >= update_interval {
+                        if last
+                            .map(|instant| now.duration_since(instant) >= update_interval)
+                            .unwrap_or(true)
+                        {
                             progress_bar.set_position(0);
-                            *last = now;
+                            *last = Some(now);
                         }
                     }
                     return;
@@ -143,9 +146,13 @@ fn main() {
 
                 let now = Instant::now();
                 if let Ok(mut last) = last_draw_time.lock() {
-                    if completed >= total || now.duration_since(*last) >= update_interval {
+                    if completed >= total
+                        || last
+                            .map(|instant| now.duration_since(instant) >= update_interval)
+                            .unwrap_or(true)
+                    {
                         progress_bar.set_position(target_position);
-                        *last = now;
+                        *last = Some(now);
                     }
                 }
             }
