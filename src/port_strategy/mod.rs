@@ -261,32 +261,47 @@ fn combined_high_frequency_ports() -> impl Iterator<Item = &'static u16> {
 }
 
 fn build_high_frequency_range(range: &PortRange) -> Vec<u16> {
-    let mut ordered_ports = BTreeSet::new();
+    let mut high_frequency_ports = BTreeSet::new();
 
     for &port in combined_high_frequency_ports() {
         if (range.start..=range.end).contains(&port) {
-            ordered_ports.insert(port);
+            high_frequency_ports.insert(port);
         }
     }
 
-    ordered_ports.extend(range.start..=range.end);
+    let mut ordered_ports: Vec<u16> = high_frequency_ports.iter().copied().collect();
 
-    ordered_ports.into_iter().collect()
+    for port in range.start..=range.end {
+        if !high_frequency_ports.contains(&port) {
+            ordered_ports.push(port);
+        }
+    }
+
+    ordered_ports
 }
 
 fn build_high_frequency_manual(manual_ports: &[u16]) -> Vec<u16> {
-    let mut ordered_ports = BTreeSet::new();
+    let mut high_frequency_ports = BTreeSet::new();
     let manual_set: HashSet<u16> = manual_ports.iter().copied().collect();
 
     for &port in combined_high_frequency_ports() {
         if manual_set.contains(&port) {
-            ordered_ports.insert(port);
+            high_frequency_ports.insert(port);
         }
     }
 
-    ordered_ports.extend(manual_ports.iter().copied());
+    let mut ordered_ports: Vec<u16> = high_frequency_ports.iter().copied().collect();
 
-    ordered_ports.into_iter().collect()
+    let mut remaining_ports = BTreeSet::new();
+    for &port in manual_ports {
+        if !high_frequency_ports.contains(&port) {
+            remaining_ports.insert(port);
+        }
+    }
+
+    ordered_ports.extend(remaining_ports);
+
+    ordered_ports
 }
 
 #[cfg(test)]
@@ -351,5 +366,130 @@ mod tests {
         let result = strategy.order();
         assert!(result.windows(2).all(|w| w[0] <= w[1]));
         assert_eq!(result, vec![22, 8080, 9000, 9999]);
+    }
+
+    #[test]
+    fn high_frequency_range_orders_priority_then_remaining() {
+        use std::collections::HashSet;
+
+        let high_frequency_ports: HashSet<u16> =
+            super::combined_high_frequency_ports().copied().collect();
+
+        let mut priority_ports = Vec::new();
+        let mut remaining_ports = Vec::new();
+
+        for port in 1..=1000 {
+            if high_frequency_ports.contains(&port) {
+                priority_ports.push(port);
+            } else {
+                remaining_ports.push(port);
+            }
+
+            if priority_ports.len() >= 2 && remaining_ports.len() >= 2 {
+                break;
+            }
+        }
+
+        let mut all_ports = priority_ports.clone();
+        all_ports.extend(remaining_ports.clone());
+        let start = *all_ports.iter().min().expect("range should not be empty");
+        let end = *all_ports.iter().max().unwrap();
+
+        let range = PortRange { start, end };
+        let strategy = PortStrategy::pick(&PortSelection::Range(range), ScanOrder::HighFrequency);
+        let result = strategy.order();
+
+        let first_non_priority = result
+            .iter()
+            .position(|port| !high_frequency_ports.contains(port))
+            .expect("range should contain non-priority ports");
+
+        assert!(
+            first_non_priority > 0,
+            "expected priority ports to be first"
+        );
+
+        assert!(
+            result[..first_non_priority]
+                .windows(2)
+                .all(|w| w[0] <= w[1]),
+            "priority ports should be sorted"
+        );
+
+        let remainder = &result[first_non_priority..];
+
+        assert!(
+            remainder
+                .iter()
+                .all(|port| !high_frequency_ports.contains(port)),
+            "remainder should not contain priority ports"
+        );
+
+        assert!(
+            remainder.windows(2).all(|w| w[0] <= w[1]),
+            "remainder should be sorted"
+        );
+    }
+
+    #[test]
+    fn high_frequency_manual_orders_priority_then_remaining() {
+        use std::collections::HashSet;
+
+        let high_frequency_ports: HashSet<u16> =
+            super::combined_high_frequency_ports().copied().collect();
+
+        let mut priority_ports = Vec::new();
+        let mut remaining_ports = Vec::new();
+
+        for port in 1..=1000 {
+            if high_frequency_ports.contains(&port) {
+                priority_ports.push(port);
+            } else {
+                remaining_ports.push(port);
+            }
+
+            if priority_ports.len() >= 2 && remaining_ports.len() >= 2 {
+                break;
+            }
+        }
+
+        let mut manual_ports = Vec::new();
+        manual_ports.extend(priority_ports.iter().copied());
+        manual_ports.extend(remaining_ports.iter().copied());
+
+        let strategy =
+            PortStrategy::pick(&PortSelection::List(manual_ports), ScanOrder::HighFrequency);
+        let result = strategy.order();
+
+        let first_non_priority = result
+            .iter()
+            .position(|port| !high_frequency_ports.contains(port))
+            .expect("manual list should contain non-priority ports");
+
+        assert!(
+            first_non_priority > 0,
+            "expected priority ports to be first"
+        );
+
+        assert!(
+            result[..first_non_priority]
+                .windows(2)
+                .all(|w| w[0] <= w[1]),
+            "priority ports should be sorted"
+        );
+
+        let remainder = &result[first_non_priority..];
+
+        assert!(
+            remainder
+                .iter()
+                .all(|port| !high_frequency_ports.contains(port)),
+            "remainder should not contain priority ports"
+        );
+
+        assert!(
+            remainder.windows(2).all(|w| w[0] <= w[1]),
+            "remainder should be sorted"
+        );
     }
 }
