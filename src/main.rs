@@ -136,7 +136,7 @@ fn main() {
 
     if let Some(progress_bar) = portscan_progress_bar {
         if !progress_bar.is_finished() {
-            progress_bar.finish_with_message("端口扫描完成");
+            progress_bar.finish_and_clear();
         }
     }
     portscan_bench.end();
@@ -367,7 +367,7 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
 
     if let Some(pb) = &progress_bar {
         if !pb.is_finished() {
-            pb.finish_with_message("HTTP 探测完成");
+            pb.finish_and_clear();
         }
     }
 
