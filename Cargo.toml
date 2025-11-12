@@ -38,6 +38,7 @@ rayon = "1.10.0"
 native-tls = "0.2.14"
 encoding_rs = "0.8.34"
 regex = "1.11.1"
+indicatif = "0.17.9"
 
 [dev-dependencies]
 wait-timeout = "0.2"
