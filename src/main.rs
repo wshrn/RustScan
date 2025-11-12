@@ -28,7 +28,7 @@ use std::io::{BufWriter, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::string::ToString;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rustscan::address::parse_addresses;
 
@@ -95,10 +95,13 @@ fn main() {
     );
     debug!("Scanner finished building: {scanner:?}");
 
+    let portscan_start = Instant::now();
     let mut portscan_bench = NamedTimer::start("端口扫描");
     let scan_result = block_on(scanner.run());
     portscan_bench.end();
     benchmarks.push(portscan_bench);
+
+    let scan_duration_secs = portscan_start.elapsed().as_secs_f64();
 
     let mut ports_per_ip = HashMap::new();
 
@@ -113,8 +116,23 @@ fn main() {
         ports.sort_unstable();
     }
 
+    if opts.greppable {
+        println!("扫描耗时：{scan_duration_secs:.2}秒");
+    } else {
+        let prefix = if opts.accessible { "" } else { " " };
+        let duration_message = format!("{}扫描耗时：{:.2}秒", prefix, scan_duration_secs);
+        detail!(duration_message, opts.greppable, opts.accessible);
+    }
+
     let mut reporting_bench = NamedTimer::start("结果汇总");
     probe_web_services(&ports_per_ip, &opts);
+
+    let mut all_ports: Vec<u16> = ports_per_ip
+        .values()
+        .flat_map(|ports| ports.iter().copied())
+        .collect();
+    all_ports.sort_unstable();
+    all_ports.dedup();
 
     for (ip, ports) in &ports_per_ip {
         let vec_str_ports: Vec<String> = ports.iter().map(ToString::to_string).collect();
@@ -124,23 +142,30 @@ fn main() {
         let open_count = ports.len();
 
         if opts.greppable {
-            println!("{} -> [{}]", &ip, ports_str);
-            println!("开放端口总数: {open_count}");
+            println!("{ip} 总端口数（{open_count}）: [{ports_str}]");
             continue;
         }
 
-        let heading = format!("{ip} 的端口扫描结果");
+        let prefix = if opts.accessible { "" } else { " " };
+        let heading = format!("{prefix}{ip} 总端口数（{open_count}）: [{ports_str}]");
         detail!(heading, opts.greppable, opts.accessible);
+    }
 
-        let ports_message = format!("    ├─ 开放端口: [{ports_str}]");
-        let summary_message = format!("    └─ 开放端口总数: {open_count}");
+    if !ports_per_ip.is_empty() {
+        let all_ports_str = all_ports
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let total_open_ports = all_ports.len();
 
-        if opts.accessible {
-            println!("{ports_message}");
-            println!("{summary_message}");
+        if opts.greppable {
+            println!("总计开放端口数（{total_open_ports}）：[{all_ports_str}]");
         } else {
-            println!("{}", ports_message.cyan());
-            println!("{}", summary_message.cyan());
+            let prefix = if opts.accessible { "" } else { " " };
+            let summary =
+                format!("{prefix}总计开放端口数（{total_open_ports}）：[{all_ports_str}]");
+            detail!(summary, opts.greppable, opts.accessible);
         }
     }
 
