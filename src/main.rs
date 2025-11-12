@@ -146,13 +146,17 @@ fn main() {
             continue;
         }
 
-        let message = format!("[~] {ip} 的开放端口: [{ports_str}]");
-        detail!(message, opts.greppable, opts.accessible);
+        let heading = format!("{ip} 的端口扫描结果");
+        detail!(heading, opts.greppable, opts.accessible);
 
-        let summary_message = format!("开放端口总数: {open_count}");
+        let ports_message = format!("    ├─ 开放端口: [{ports_str}]");
+        let summary_message = format!("    └─ 开放端口总数: {open_count}");
+
         if opts.accessible {
+            println!("{ports_message}");
             println!("{summary_message}");
         } else {
+            println!("{}", ports_message.cyan());
             println!("{}", summary_message.cyan());
         }
     }
