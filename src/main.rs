@@ -41,7 +41,7 @@ extern crate colorful;
 const DEFAULT_FILE_DESCRIPTORS_LIMIT: u64 = 8000;
 // Safest batch size based on experimentation
 const AVERAGE_BATCH_SIZE: u16 = 3000;
-const PORTSCAN_PROGRESS_UPDATE_INTERVAL_SECS: u64 = 8;
+const PORTSCAN_PROGRESS_UPDATE_INTERVAL_SECS: u64 = 1;
 const PORTSCAN_PROGRESS_DRAW_HZ: u8 = 1;
 const HTTP_PROGRESS_DRAW_HZ: u8 = 10;
 
@@ -546,15 +546,29 @@ fn format_http_finding_line(message: &str, greppable: bool, accessible: bool) ->
 }
 
 fn format_http_finding_status(finding: &HttpProbeFinding) -> String {
-    let title_display = if finding.title.is_empty() {
+    let url_display = truncate_with_ellipsis(&finding.url, MAX_URL_DISPLAY_LENGTH);
+    let title_source = if finding.title.is_empty() {
         NO_TITLE_TEXT
     } else {
         &finding.title
     };
+    let title_display = truncate_with_ellipsis(title_source, MAX_TITLE_DISPLAY_LENGTH);
+
+    let url_width = url_display.len().max("URL".len());
+    let status_width = 5usize;
+    let length_width = finding.length_display.len().max("大小".len());
+    let title_width = title_display.len().max("标题".len());
 
     format!(
-        "实时发现 HTTP 服务 -> URL: {} | 状态: {} | 大小: {} | 标题: {}",
-        finding.url, finding.status_code, finding.length_display, title_display
+        "{:<url_width$}  {:>status_width$}  {:>length_width$}  {:<title_width$}",
+        url_display,
+        finding.status_code,
+        finding.length_display,
+        title_display,
+        url_width = url_width,
+        status_width = status_width,
+        length_width = length_width,
+        title_width = title_width
     )
 }
 
