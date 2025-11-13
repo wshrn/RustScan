@@ -48,7 +48,6 @@ const PORTSCAN_PROGRESS_UPDATE_INTERVAL_SECS: u64 = 1;
 const PORTSCAN_PROGRESS_DRAW_HZ: u8 = 1;
 const HTTP_PROGRESS_DRAW_HZ: u8 = 10;
 const STATUS_COLUMN_WIDTH: usize = 5;
-const REALTIME_HTTP_HEADING: &str = "HTTP 服务探测结果（实时更新）";
 
 #[macro_use]
 extern crate log;
@@ -651,14 +650,6 @@ fn build_realtime_http_output(
     let mut lines = Vec::new();
 
     if include_header {
-        lines.push(String::new());
-        let heading = REALTIME_HTTP_HEADING.to_string();
-        if accessible {
-            lines.push(heading);
-        } else {
-            lines.push(format!("{}", heading.cyan().bold()));
-        }
-
         let header_row = http_table_header_row(&widths);
         if accessible {
             lines.push(header_row);
@@ -953,15 +944,11 @@ fn print_http_findings(findings: &[HttpProbeFinding], accessible: bool) {
     println!();
 
     if accessible {
-        println!("HTTP 服务探测结果（共 {} 个）", findings.len());
         println!("{header_row}");
-        println!("{separator_row}");
     } else {
-        let heading = format!("HTTP 服务探测结果（共 {} 个）", findings.len());
-        println!("{}", heading.cyan().bold());
         println!("{}", header_row.white().bold());
-        println!("{separator_row}");
     }
+    println!("{separator_row}");
 
     for (url_display, title_display, finding) in display_items {
         let row = format_http_table_row(&url_display, &title_display, finding, &widths, accessible);
