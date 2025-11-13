@@ -1,6 +1,7 @@
 //! Core functionality for actual scanning behaviour.
 use crate::generated::get_parsed_data;
 use crate::port_strategy::PortStrategy;
+use crate::tui::progress_println;
 use log::debug;
 
 mod socket_iterator;
@@ -342,7 +343,7 @@ impl Scanner {
                 }
             }
             Err(e) => {
-                println!("绑定套接字时出错 {e:?}");
+                progress_println(format!("绑定套接字时出错 {e:?}"));
                 Err(e)
             }
         }
@@ -356,20 +357,20 @@ impl Scanner {
             if PORT_SECTION_SHOWN.set(()).is_ok() {
                 let heading = "开放端口";
                 if self.accessible {
-                    println!();
-                    println!("{heading}");
+                    progress_println(String::new());
+                    progress_println(heading.to_string());
                 } else {
-                    println!();
-                    println!("{}", heading.cyan().bold());
+                    progress_println(String::new());
+                    progress_println(heading.cyan().bold().to_string());
                 }
             }
 
             let entry = format!("  • {socket}");
 
             if self.accessible {
-                println!("{entry}");
+                progress_println(entry.clone());
             } else {
-                println!("{}", entry.purple().bold());
+                progress_println(entry.purple().bold().to_string());
             }
         }
     }

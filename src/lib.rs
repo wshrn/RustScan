@@ -39,7 +39,7 @@
 //!
 //!     let scan_result = block_on(scanner.run());
 //!
-//!     println!("{:?}", scan_result);
+//!     rustscan::tui::progress_println(format!("{:?}", scan_result));
 //! }
 //! ```
 #![allow(clippy::needless_doctest_main)]

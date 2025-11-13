@@ -45,6 +45,9 @@ console = "0.15.11"
 wait-timeout = "0.2"
 criterion = { version = "0.7", features = ["html_reports"] }
 
+[build-dependencies]
+indicatif = "0.17.9"
+
 [package.metadata.deb]
 depends = "$auto"
 section = "rust"
