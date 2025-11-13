@@ -1,6 +1,7 @@
 //! Core functionality for actual scanning behaviour.
 use crate::generated::get_parsed_data;
 use crate::port_strategy::PortStrategy;
+use indicatif::ProgressBar;
 use log::debug;
 
 mod socket_iterator;
@@ -29,7 +30,6 @@ use std::{
 /// Timeout is the time RustScan should wait before declaring a port closed. As datatype Duration.
 /// greppable is whether or not RustScan should print things, or wait until the end to print only the ip and open ports.
 #[cfg(not(tarpaulin_include))]
-#[derive(Debug)]
 pub struct Scanner {
     ips: Vec<IpAddr>,
     batch_size: u16,
@@ -41,6 +41,7 @@ pub struct Scanner {
     exclude_ports: Vec<u16>,
     udp: bool,
     progress_reporter: Option<ProgressReporter>,
+    progress_logger: Option<ProgressBar>,
 }
 
 #[derive(Clone)]
@@ -94,6 +95,7 @@ impl Scanner {
             exclude_ports,
             udp,
             progress_reporter: None,
+            progress_logger: None,
         }
     }
 
@@ -103,6 +105,14 @@ impl Scanner {
 
     pub fn clear_progress_reporter(&mut self) {
         self.progress_reporter = None;
+    }
+
+    pub fn set_progress_logger(&mut self, progress_bar: ProgressBar) {
+        self.progress_logger = Some(progress_bar);
+    }
+
+    pub fn clear_progress_logger(&mut self) {
+        self.progress_logger = None;
     }
 
     /// Runs scan_range with chunk sizes
@@ -342,7 +352,7 @@ impl Scanner {
                 }
             }
             Err(e) => {
-                println!("绑定套接字时出错 {e:?}");
+                self.progress_println(format!("绑定套接字时出错 {e:?}"));
                 Err(e)
             }
         }
@@ -355,22 +365,58 @@ impl Scanner {
 
             if PORT_SECTION_SHOWN.set(()).is_ok() {
                 let heading = "开放端口";
+                self.progress_print_blank_line();
                 if self.accessible {
-                    println!();
-                    println!("{heading}");
+                    self.progress_println(heading);
                 } else {
-                    println!();
-                    println!("{}", heading.cyan().bold());
+                    self.progress_println(heading.cyan().bold().to_string());
                 }
             }
 
             let entry = format!("  • {socket}");
 
             if self.accessible {
-                println!("{entry}");
+                self.progress_println(entry);
             } else {
-                println!("{}", entry.purple().bold());
+                self.progress_println(entry.purple().bold().to_string());
             }
+        }
+    }
+}
+
+impl fmt::Debug for Scanner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Scanner")
+            .field("ips", &self.ips)
+            .field("batch_size", &self.batch_size)
+            .field("timeout", &self.timeout)
+            .field("tries", &self.tries)
+            .field("greppable", &self.greppable)
+            .field("port_strategy", &self.port_strategy)
+            .field("accessible", &self.accessible)
+            .field("exclude_ports", &self.exclude_ports)
+            .field("udp", &self.udp)
+            .field("progress_reporter", &self.progress_reporter)
+            .field("has_progress_logger", &self.progress_logger.is_some())
+            .finish()
+    }
+}
+
+impl Scanner {
+    fn progress_println(&self, message: impl Into<String>) {
+        let msg = message.into();
+        if let Some(pb) = &self.progress_logger {
+            pb.println(msg);
+        } else {
+            println!("{msg}");
+        }
+    }
+
+    fn progress_print_blank_line(&self) {
+        if let Some(pb) = &self.progress_logger {
+            pb.println("");
+        } else {
+            println!();
         }
     }
 }
