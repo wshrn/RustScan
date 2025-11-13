@@ -128,8 +128,26 @@ impl FromStr for PortSelection {
     max_term_width = 120,
     about = "高速端口扫描器，采用 Rust 构建。",
     long_about = "高速端口扫描器，采用 Rust 构建。\n警告：请勿对敏感基础设施使用本程序，目标服务器可能无法承受大量并发套接字。",
-    help_template = "{name} {version}\n{about}\n\n用法:\n  {usage}\n\n参数:\n{options}\n{after-help}",
-    after_help = "示例:\n  rustscan -a 192.168.0.1\n  rustscan -a 192.168.0.1,10.0.0.0/24 -p 80,443 --exclude-ports 22\n  rustscan -a targets.txt -p 1-1024 --scan-order random --timeout 3000\n  rustscan -a 192.168.0.0/24 -ht 5 -hs 40",
+    help_template = r#"{name} {version}
+{about}
+
+┌───────────────────────────────┐
+│             用法              │
+└───────────────────────────────┘
+  {usage}
+
+┌───────────────────────────────┐
+│             参数              │
+└───────────────────────────────┘
+{options}
+{after-help}"#,
+    after_help = r#"┌───────────────────────────────┐
+│             示例              │
+└───────────────────────────────┘
+  rustscan -a 192.168.0.1
+  rustscan -a 192.168.0.1,10.0.0.0/24 -p 80,443 --exclude-ports 22
+  rustscan -a targets.txt -p 1-1024 --scan-order random --timeout 3000
+  rustscan -a 192.168.0.0/24 -ht 5 -hs 40"#,
 )]
 #[allow(clippy::struct_excessive_bools)]
 /// RustScan 命令行参数定义。
@@ -175,9 +193,9 @@ pub struct Opts {
     #[arg(short, long, default_value = "1500")]
     pub timeout: u32,
 
-    /// 端口被视为关闭前的重试次数，若设为 0 将自动调整为 1。
+    /// 端口被视为关闭前的重试次数，若设为 0 将自动调整为 1，默认 2 次。
     /// 示例：`--tries 3`。
-    #[arg(long, default_value = "1")]
+    #[arg(long, default_value = "2")]
     pub tries: u8,
 
     /// 将系统 ulimit 调整为提供的数值。
@@ -284,7 +302,7 @@ impl Default for Opts {
             greppable: true,
             batch_size: 0,
             timeout: 0,
-            tries: 0,
+            tries: 2,
             ulimit: None,
             accessible: false,
             resolver: None,
