@@ -29,7 +29,7 @@ pub struct PortRange {
 fn parse_range(input: &str) -> Result<PortRange, String> {
     let range = input
         .split('-')
-        .map(str::parse)
+        .map(|segment| segment.trim().parse::<u16>())
         .collect::<Result<Vec<u16>, std::num::ParseIntError>>();
 
     if range.is_err() {
