@@ -29,7 +29,10 @@ use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::string::ToString;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::{Duration, Instant};
 
 use rustscan::address::parse_addresses;
@@ -41,9 +44,11 @@ extern crate colorful;
 const DEFAULT_FILE_DESCRIPTORS_LIMIT: u64 = 8000;
 // Safest batch size based on experimentation
 const AVERAGE_BATCH_SIZE: u16 = 3000;
-const PORTSCAN_PROGRESS_UPDATE_INTERVAL_SECS: u64 = 8;
+const PORTSCAN_PROGRESS_UPDATE_INTERVAL_SECS: u64 = 1;
 const PORTSCAN_PROGRESS_DRAW_HZ: u8 = 1;
 const HTTP_PROGRESS_DRAW_HZ: u8 = 10;
+const STATUS_COLUMN_WIDTH: usize = 5;
+const REALTIME_HTTP_HEADING: &str = "HTTP 服务探测结果（实时更新）";
 
 #[macro_use]
 extern crate log;
@@ -358,6 +363,7 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
     let client_no_redirect = Arc::new(client_no_redirect);
     let client_follow_redirect = Arc::new(client_follow_redirect);
     let http_findings = Arc::new(Mutex::new(Vec::new()));
+    let realtime_header_printed = Arc::new(AtomicBool::new(false));
     let greppable = opts.greppable;
     let accessible = opts.accessible;
 
@@ -383,6 +389,7 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
                 let accessible = accessible;
                 let ip = *ip;
                 let progress_bar = progress_bar_for_threads.clone();
+                let realtime_header_printed = Arc::clone(&realtime_header_printed);
                 scope.spawn(move |_| {
                     if let Some(finding) = probe_single_port(
                         ip,
@@ -391,14 +398,20 @@ fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
                         &client_no_redirect,
                         &client_follow_redirect,
                     ) {
-                        let status_message = format_http_finding_status(&finding);
-
                         if let Some(pb) = &progress_bar {
-                            let display_line =
-                                format_http_finding_line(&status_message, greppable, accessible);
-                            pb.println(display_line);
-                            pb.set_message(format!("HTTP 探测进度 | {status_message}"));
+                            let include_header = realtime_header_printed
+                                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                                .is_ok();
+                            let (display_lines, plain_row) =
+                                build_realtime_http_output(&finding, include_header, accessible);
+
+                            for line in display_lines {
+                                pb.println(line);
+                            }
+
+                            pb.set_message(format!("HTTP 探测进度 | {plain_row}"));
                         } else {
+                            let status_message = format_http_finding_status(&finding);
                             emit_http_finding_line(&status_message, greppable, accessible);
                         }
 
@@ -535,6 +548,133 @@ fn probe_single_port(
 fn emit_http_finding_line(message: &str, greppable: bool, accessible: bool) {
     let line = format_http_finding_line(message, greppable, accessible);
     println!("{line}");
+}
+
+#[derive(Clone, Copy)]
+struct HttpTableDimensions {
+    url: usize,
+    status: usize,
+    length: usize,
+    title: usize,
+}
+
+fn http_table_header_row(widths: &HttpTableDimensions) -> String {
+    format!(
+        "{:<url_width$}  {:>status_width$}  {:>length_width$}  {:<title_width$}",
+        "URL",
+        "状态",
+        "大小",
+        "标题",
+        url_width = widths.url,
+        status_width = widths.status,
+        length_width = widths.length,
+        title_width = widths.title
+    )
+}
+
+fn http_table_separator_row(widths: &HttpTableDimensions, accessible: bool) -> String {
+    let separator_char = if accessible { '-' } else { '─' };
+    let url_rule: String = std::iter::repeat(separator_char).take(widths.url).collect();
+    let status_rule: String = std::iter::repeat(separator_char)
+        .take(widths.status)
+        .collect();
+    let length_rule: String = std::iter::repeat(separator_char)
+        .take(widths.length)
+        .collect();
+    let title_rule: String = std::iter::repeat(separator_char)
+        .take(widths.title)
+        .collect();
+
+    format!(
+        "{url_rule}  {status_rule}  {length_rule}  {title_rule}",
+        url_rule = url_rule,
+        status_rule = status_rule,
+        length_rule = length_rule,
+        title_rule = title_rule
+    )
+}
+
+fn format_http_table_row(
+    url_display: &str,
+    title_display: &str,
+    finding: &HttpProbeFinding,
+    widths: &HttpTableDimensions,
+    accessible: bool,
+) -> String {
+    let url_column = format!("{:<width$}", url_display, width = widths.url);
+    let url_column = if accessible {
+        url_column
+    } else {
+        format!("{}", url_column.cyan())
+    };
+
+    let status_column = format!("{:>width$}", finding.status_code, width = widths.status);
+    let status_column = stylize_status(status_column, finding.status_code, accessible);
+
+    let length_column = format!("{:>width$}", finding.length_display, width = widths.length);
+    let length_column = if accessible {
+        length_column
+    } else {
+        format!("{}", length_column.yellow())
+    };
+
+    let title_column = format!("{:<width$}", title_display, width = widths.title);
+    let title_column = if accessible {
+        title_column
+    } else {
+        format!("{}", title_column.white())
+    };
+
+    format!(
+        "{url_column}  {status_column}  {length_column}  {title_column}",
+        url_column = url_column,
+        status_column = status_column,
+        length_column = length_column,
+        title_column = title_column
+    )
+}
+
+fn build_realtime_http_output(
+    finding: &HttpProbeFinding,
+    include_header: bool,
+    accessible: bool,
+) -> (Vec<String>, String) {
+    let url_display = truncate_with_ellipsis(&finding.url, MAX_URL_DISPLAY_LENGTH);
+    let title_display = truncate_with_ellipsis(&finding.title, MAX_TITLE_DISPLAY_LENGTH);
+    let widths = HttpTableDimensions {
+        url: url_display.len().max("URL".len()),
+        status: STATUS_COLUMN_WIDTH,
+        length: finding.length_display.len().max("大小".len()),
+        title: title_display.len().max("标题".len()),
+    };
+
+    let mut lines = Vec::new();
+
+    if include_header {
+        lines.push(String::new());
+        let heading = REALTIME_HTTP_HEADING.to_string();
+        if accessible {
+            lines.push(heading);
+        } else {
+            lines.push(format!("{}", heading.cyan().bold()));
+        }
+
+        let header_row = http_table_header_row(&widths);
+        if accessible {
+            lines.push(header_row);
+        } else {
+            lines.push(format!("{}", header_row.white().bold()));
+        }
+
+        lines.push(http_table_separator_row(&widths, accessible));
+    }
+
+    let colored_row =
+        format_http_table_row(&url_display, &title_display, finding, &widths, accessible);
+    let plain_row = format_http_table_row(&url_display, &title_display, finding, &widths, true);
+    lines.push(colored_row);
+
+    (lines, plain_row)
 }
 
 fn format_http_finding_line(message: &str, greppable: bool, accessible: bool) -> String {
@@ -786,59 +926,29 @@ fn print_http_findings(findings: &[HttpProbeFinding], accessible: bool) {
         })
         .collect();
 
-    let url_width = display_items
-        .iter()
-        .map(|(url_display, _, _)| url_display.len())
-        .max()
-        .unwrap_or(3)
-        .max("URL".len());
+    let widths = HttpTableDimensions {
+        url: display_items
+            .iter()
+            .map(|(url_display, _, _)| url_display.len())
+            .max()
+            .unwrap_or(3)
+            .max("URL".len()),
+        status: STATUS_COLUMN_WIDTH,
+        length: findings
+            .iter()
+            .map(|finding| finding.length_display.len())
+            .max()
+            .unwrap_or(1)
+            .max("大小".len()),
+        title: display_items
+            .iter()
+            .map(|(_, title_display, _)| title_display.len())
+            .max()
+            .unwrap_or("标题".len()),
+    };
 
-    let length_width = findings
-        .iter()
-        .map(|finding| finding.length_display.len())
-        .max()
-        .unwrap_or(1)
-        .max("大小".len());
-
-    let title_width = display_items
-        .iter()
-        .map(|(_, title_display, _)| title_display.len())
-        .max()
-        .unwrap_or("标题".len());
-
-    let status_width = 5usize;
-
-    let separator_char = if accessible { '-' } else { '─' };
-    let url_rule: String = std::iter::repeat(separator_char).take(url_width).collect();
-    let status_rule: String = std::iter::repeat(separator_char)
-        .take(status_width)
-        .collect();
-    let length_rule: String = std::iter::repeat(separator_char)
-        .take(length_width)
-        .collect();
-    let title_rule: String = std::iter::repeat(separator_char)
-        .take(title_width)
-        .collect();
-
-    let header_row = format!(
-        "{:<url_width$}  {:>status_width$}  {:>length_width$}  {:<title_width$}",
-        "URL",
-        "状态",
-        "大小",
-        "标题",
-        url_width = url_width,
-        status_width = status_width,
-        length_width = length_width,
-        title_width = title_width
-    );
-
-    let separator_row = format!(
-        "{url_rule}  {status_rule}  {length_rule}  {title_rule}",
-        url_rule = url_rule,
-        status_rule = status_rule,
-        length_rule = length_rule,
-        title_rule = title_rule
-    );
+    let header_row = http_table_header_row(&widths);
+    let separator_row = http_table_separator_row(&widths, accessible);
 
     println!();
 
@@ -854,39 +964,8 @@ fn print_http_findings(findings: &[HttpProbeFinding], accessible: bool) {
     }
 
     for (url_display, title_display, finding) in display_items {
-        let url_column = format!("{:<url_width$}", url_display, url_width = url_width);
-        let url_column = if accessible {
-            url_column
-        } else {
-            format!("{}", url_column.cyan())
-        };
-
-        let status_column = format!(
-            "{:>status_width$}",
-            finding.status_code,
-            status_width = status_width
-        );
-        let status_column = stylize_status(status_column, finding.status_code, accessible);
-
-        let length_column = format!(
-            "{:>length_width$}",
-            finding.length_display,
-            length_width = length_width
-        );
-        let length_column = if accessible {
-            length_column
-        } else {
-            format!("{}", length_column.yellow())
-        };
-
-        let title_column = format!("{:<title_width$}", title_display, title_width = title_width);
-        let title_column = if accessible {
-            title_column
-        } else {
-            format!("{}", title_column.white())
-        };
-
-        println!("{url_column}  {status_column}  {length_column}  {title_column}");
+        let row = format_http_table_row(&url_display, &title_display, finding, &widths, accessible);
+        println!("{row}");
     }
 }
 
