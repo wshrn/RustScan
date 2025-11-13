@@ -18,7 +18,6 @@ exclude = [
 
 [dependencies]
 clap = { version = "4.5.48", features = ["derive", "wrap_help"] }
-colored = "3.0.0"
 async-std = "1.13.2"
 futures = "0.3"
 rlimit = "0.10.2"

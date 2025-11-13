@@ -4,15 +4,14 @@
 
 use rustscan::benchmark::{Benchmark, NamedTimer};
 use rustscan::input::Opts;
+use rustscan::output::create_progress_bar;
 use rustscan::port_strategy::PortStrategy;
 use rustscan::scanner::{ProgressReporter, Scanner};
 use rustscan::{detail, warning};
 
 use colorful::{Color, Colorful};
-use console::Term;
 use encoding_rs::GB18030;
 use futures::executor::block_on;
-use indicatif::{ProgressBar, ProgressDrawTarget, ProgressFinish, ProgressStyle};
 use native_tls::TlsConnector;
 use once_cell::sync::OnceCell;
 use rayon::ThreadPoolBuilder;
@@ -276,34 +275,6 @@ const USER_AGENT_VALUE: &str =
     "Mozilla/5.0 (compatible; RustScan/HTTP-Probe; +https://github.com/rustscan/rustscan)";
 const ACCEPT_HEADER_VALUE: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 const THREAD_NAME_PREFIX: &str = "http-probe";
-
-fn create_progress_bar(total: u64, message: &str, accessible: bool, draw_hz: u8) -> ProgressBar {
-    let progress_bar = ProgressBar::new(total).with_finish(ProgressFinish::AndClear);
-
-    if Term::stderr().is_term() {
-        let template = if accessible {
-            "{msg} [{bar:40}] {pos:>5}/{len:<5} {percent:>3}%"
-        } else {
-            "{msg} {wide_bar:.cyan/blue} {pos:>5}/{len:<5} {percent:>3}%"
-        };
-
-        let style =
-            ProgressStyle::with_template(template).unwrap_or_else(|_| ProgressStyle::default_bar());
-        let style = if accessible {
-            style.progress_chars("=>-")
-        } else {
-            style.progress_chars("█▓░")
-        };
-
-        progress_bar.set_style(style);
-        progress_bar.set_draw_target(ProgressDrawTarget::stderr_with_hz(draw_hz));
-    } else {
-        progress_bar.set_draw_target(ProgressDrawTarget::hidden());
-    }
-
-    progress_bar.set_message(message.to_string());
-    progress_bar
-}
 
 fn probe_web_services(ports_per_ip: &HashMap<IpAddr, Vec<u16>>, opts: &Opts) {
     if ports_per_ip.is_empty() {
