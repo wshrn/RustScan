@@ -57,3 +57,5 @@ pub mod benchmark;
 pub mod address;
 
 pub mod generated;
+
+pub mod output;
