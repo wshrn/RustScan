@@ -4,6 +4,7 @@
 
 use rustscan::benchmark::{Benchmark, NamedTimer};
 use rustscan::input::Opts;
+use rustscan::output::OutputTheme;
 use rustscan::port_strategy::PortStrategy;
 use rustscan::scanner::{ProgressReporter, Scanner};
 use rustscan::{detail, warning};
@@ -279,21 +280,14 @@ const THREAD_NAME_PREFIX: &str = "http-probe";
 
 fn create_progress_bar(total: u64, message: &str, accessible: bool, draw_hz: u8) -> ProgressBar {
     let progress_bar = ProgressBar::new(total).with_finish(ProgressFinish::AndClear);
+    let theme = OutputTheme::new(accessible);
 
     if Term::stderr().is_term() {
-        let template = if accessible {
-            "{msg} [{bar:40}] {pos:>5}/{len:<5} {percent:>3}%"
-        } else {
-            "{msg} {wide_bar:.cyan/blue} {pos:>5}/{len:<5} {percent:>3}%"
-        };
+        let template = theme.progress_template();
 
         let style =
             ProgressStyle::with_template(template).unwrap_or_else(|_| ProgressStyle::default_bar());
-        let style = if accessible {
-            style.progress_chars("=>-")
-        } else {
-            style.progress_chars("█▓░")
-        };
+        let style = style.progress_chars(theme.progress_chars());
 
         progress_bar.set_style(style);
         progress_bar.set_draw_target(ProgressDrawTarget::stderr_with_hz(draw_hz));
@@ -573,8 +567,8 @@ fn http_table_header_row(widths: &HttpTableDimensions) -> String {
     )
 }
 
-fn http_table_separator_row(widths: &HttpTableDimensions, accessible: bool) -> String {
-    let separator_char = if accessible { '-' } else { '─' };
+fn http_table_separator_row(widths: &HttpTableDimensions, theme: OutputTheme) -> String {
+    let separator_char = theme.separator_char();
     let url_rule: String = std::iter::repeat(separator_char).take(widths.url).collect();
     let status_rule: String = std::iter::repeat(separator_char)
         .take(widths.status)
@@ -600,31 +594,19 @@ fn format_http_table_row(
     title_display: &str,
     finding: &HttpProbeFinding,
     widths: &HttpTableDimensions,
-    accessible: bool,
+    theme: OutputTheme,
 ) -> String {
     let url_column = format!("{:<width$}", url_display, width = widths.url);
-    let url_column = if accessible {
-        url_column
-    } else {
-        format!("{}", url_column.cyan())
-    };
+    let url_column = theme.url_column(url_column);
 
     let status_column = format!("{:>width$}", finding.status_code, width = widths.status);
-    let status_column = stylize_status(status_column, finding.status_code, accessible);
+    let status_column = theme.status_column(status_column, finding.status_code);
 
     let length_column = format!("{:>width$}", finding.length_display, width = widths.length);
-    let length_column = if accessible {
-        length_column
-    } else {
-        format!("{}", length_column.yellow())
-    };
+    let length_column = theme.length_column(length_column);
 
     let title_column = format!("{:<width$}", title_display, width = widths.title);
-    let title_column = if accessible {
-        title_column
-    } else {
-        format!("{}", title_column.white())
-    };
+    let title_column = theme.title_column(title_column);
 
     format!(
         "{url_column}  {status_column}  {length_column}  {title_column}",
@@ -640,6 +622,8 @@ fn build_realtime_http_output(
     include_header: bool,
     accessible: bool,
 ) -> (Vec<String>, String) {
+    let theme = OutputTheme::new(accessible);
+    let plain_theme = OutputTheme::new(true);
     let url_display = truncate_with_ellipsis(&finding.url, MAX_URL_DISPLAY_LENGTH);
     let title_display = truncate_with_ellipsis(&finding.title, MAX_TITLE_DISPLAY_LENGTH);
     let widths = HttpTableDimensions {
@@ -653,18 +637,13 @@ fn build_realtime_http_output(
 
     if include_header {
         let header_row = http_table_header_row(&widths);
-        if accessible {
-            lines.push(header_row);
-        } else {
-            lines.push(format!("{}", header_row.white().bold()));
-        }
-
-        lines.push(http_table_separator_row(&widths, accessible));
+        lines.push(theme.table_header(header_row));
+        lines.push(http_table_separator_row(&widths, theme));
     }
 
-    let colored_row =
-        format_http_table_row(&url_display, &title_display, finding, &widths, accessible);
-    let plain_row = format_http_table_row(&url_display, &title_display, finding, &widths, true);
+    let colored_row = format_http_table_row(&url_display, &title_display, finding, &widths, theme);
+    let plain_row =
+        format_http_table_row(&url_display, &title_display, finding, &widths, plain_theme);
     lines.push(colored_row);
 
     (lines, plain_row)
@@ -907,6 +886,7 @@ fn print_http_findings(findings: &[HttpProbeFinding], accessible: bool) {
         return;
     }
 
+    let theme = OutputTheme::new(accessible);
     let display_items: Vec<(String, String, &HttpProbeFinding)> = findings
         .iter()
         .map(|finding| {
@@ -938,34 +918,14 @@ fn print_http_findings(findings: &[HttpProbeFinding], accessible: bool) {
     };
 
     let header_row = http_table_header_row(&widths);
-    let separator_row = http_table_separator_row(&widths, accessible);
+    let separator_row = http_table_separator_row(&widths, theme);
 
-    if accessible {
-        println!("{header_row}");
-    } else {
-        println!("{}", header_row.white().bold());
-    }
+    println!("{}", theme.table_header(header_row));
     println!("{separator_row}");
 
     for (url_display, title_display, finding) in display_items {
-        let row = format_http_table_row(&url_display, &title_display, finding, &widths, accessible);
+        let row = format_http_table_row(&url_display, &title_display, finding, &widths, theme);
         println!("{row}");
-    }
-}
-
-fn stylize_status(status: String, code: u16, accessible: bool) -> String {
-    if accessible {
-        return status;
-    }
-
-    if (200..=299).contains(&code) {
-        format!("{}", status.green().bold())
-    } else if (300..=399).contains(&code) {
-        format!("{}", status.yellow().bold())
-    } else if (400..=599).contains(&code) {
-        format!("{}", status.red().bold())
-    } else {
-        format!("{}", status.white())
     }
 }
 

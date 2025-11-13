@@ -1,5 +1,6 @@
 //! Core functionality for actual scanning behaviour.
 use crate::generated::get_parsed_data;
+use crate::output::OutputTheme;
 use crate::port_strategy::PortStrategy;
 use indicatif::ProgressBar;
 use log::debug;
@@ -362,24 +363,16 @@ impl Scanner {
     fn fmt_ports(&self, socket: SocketAddr) {
         if !self.greppable {
             static PORT_SECTION_SHOWN: OnceCell<()> = OnceCell::new();
+            let theme = OutputTheme::new(self.accessible);
 
             if PORT_SECTION_SHOWN.set(()).is_ok() {
                 let heading = "开放端口";
                 self.progress_print_blank_line();
-                if self.accessible {
-                    self.progress_println(heading);
-                } else {
-                    self.progress_println(heading.cyan().bold().to_string());
-                }
+                self.progress_println(theme.heading(heading));
             }
 
             let entry = format!("  • {socket}");
-
-            if self.accessible {
-                self.progress_println(entry);
-            } else {
-                self.progress_println(entry.purple().bold().to_string());
-            }
+            self.progress_println(theme.bullet_item(&entry));
         }
     }
 }
