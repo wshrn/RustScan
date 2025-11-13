@@ -1,5 +1,6 @@
 //! Core functionality for actual scanning behaviour.
 use crate::generated::get_parsed_data;
+use crate::output::{format_list_entry, format_section_heading};
 use crate::port_strategy::PortStrategy;
 use indicatif::ProgressBar;
 use log::debug;
@@ -10,7 +11,6 @@ use socket_iterator::SocketIterator;
 use async_std::net::TcpStream;
 use async_std::prelude::*;
 use async_std::{io, net::UdpSocket};
-use colored::Colorize;
 use futures::stream::FuturesUnordered;
 use once_cell::sync::OnceCell;
 use std::collections::BTreeMap;
@@ -364,22 +364,13 @@ impl Scanner {
             static PORT_SECTION_SHOWN: OnceCell<()> = OnceCell::new();
 
             if PORT_SECTION_SHOWN.set(()).is_ok() {
-                let heading = "开放端口";
+                let heading = format_section_heading("开放端口", self.accessible);
                 self.progress_print_blank_line();
-                if self.accessible {
-                    self.progress_println(heading);
-                } else {
-                    self.progress_println(heading.cyan().bold().to_string());
-                }
+                self.progress_println(heading);
             }
 
             let entry = format!("  • {socket}");
-
-            if self.accessible {
-                self.progress_println(entry);
-            } else {
-                self.progress_println(entry.purple().bold().to_string());
-            }
+            self.progress_println(format_list_entry(entry, self.accessible));
         }
     }
 }
