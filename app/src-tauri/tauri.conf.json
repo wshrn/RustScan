@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/1",
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev",
+    "devPath": "http://localhost:5173",
+    "distDir": "../dist"
+  },
+  "package": {
+    "productName": "RustScan GUI",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "bundle": {
+      "active": true,
+      "targets": "all",
+      "identifier": "com.rustscan.gui",
+      "icon": ["icons/app-icon.ico"]
+    },
+    "windows": [
+      {
+        "title": "RustScan GUI",
+        "width": 1200,
+        "height": 800,
+        "decorations": false,
+        "transparent": true
+      }
+    ],
+    "allowlist": {
+      "all": true
+    }
+  }
+}
