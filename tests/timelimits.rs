@@ -7,6 +7,7 @@
  * Their tests in the timelimits module are run by travis during CI.
  */
 
+use rustscan::tui::progress_println;
 use std::process::Command;
 use std::time::Duration;
 use wait_timeout::ChildExt;
@@ -15,7 +16,10 @@ const TIMEOUT_MARGIN: u32 = 3;
 
 #[cfg(not(tarpaulin_include))]
 fn run_rustscan_with_timeout(args: &[&str], timeout: Duration) {
-    println!("Running: target/debug/rustscan: {}", args.join(" "));
+    progress_println(format!(
+        "Running: target/debug/rustscan: {}",
+        args.join(" ")
+    ));
 
     use std::time::Instant;
 
@@ -44,7 +48,7 @@ fn run_rustscan_with_timeout(args: &[&str], timeout: Duration) {
     let end = Instant::now();
     let duration = end.saturating_duration_since(start).as_secs_f32();
 
-    println!("time: {:1.1}s", duration);
+    progress_println(format!("time: {:1.1}s", duration));
 }
 
 mod timelimits {

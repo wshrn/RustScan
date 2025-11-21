@@ -39,10 +39,14 @@ native-tls = "0.2.14"
 encoding_rs = "0.8.34"
 regex = "1.11.1"
 indicatif = "0.17.9"
+console = "0.15.11"
 
 [dev-dependencies]
 wait-timeout = "0.2"
 criterion = { version = "0.7", features = ["html_reports"] }
+
+[build-dependencies]
+indicatif = "0.17.9"
 
 [package.metadata.deb]
 depends = "$auto"
