@@ -56,5 +56,6 @@ npm run tauri build
 - **依赖解析失败**：删除 `app/node_modules` 后重新执行 `npm install`，确保使用支持 Tauri 1.6 的 Node 版本。
 - **构建缺少 SDK/工具链**：按第 1 节安装对应平台要求的系统依赖。
 - **主题未生效**：确认本地存储或 `ZHIGONG_TOOLBOX_THEME` 环境变量值为 `light` / `dark` / `auto`。
+- **GTK 链接冲突 (`gtk-sys` links = "gtk-3")**：避免混用 Tauri 1.x 与插件 2.x。仓库已将 `tauri-plugin-opener` 固定到 `1.x` 以匹配 `tauri = "1"`，如自行调整依赖，请确保所有 Tauri 相关 crate 的主版本一致。
 
 完成以上步骤后，可在本地稳定运行 GUI 并进入正式构建流程。
