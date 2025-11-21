@@ -25,11 +25,9 @@
 </template>
 
 <script setup lang="ts">
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { appWindow } from '@tauri-apps/api/window'
 import ThemeToggle from './ThemeToggle.vue'
 import WindowControls from './WindowControls.vue'
-
-const appWindow = getCurrentWindow()
 
 const startDragging = async (event: MouseEvent) => {
   if (event.button === 0) {

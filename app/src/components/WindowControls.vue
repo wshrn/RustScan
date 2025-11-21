@@ -34,10 +34,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { appWindow } from '@tauri-apps/api/window'
 import { MinusIcon, Squares2X2Icon, XMarkIcon } from '@heroicons/vue/24/outline'
 
-const appWindow = getCurrentWindow()
 const isMaximized = ref(false)
 const listeners: UnlistenFn[] = []
 
