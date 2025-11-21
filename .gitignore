@@ -124,3 +124,7 @@ fabric.properties
 .idea*
 
 settings.json
+app/node_modules
+app/dist
+app/.turbo
+app/.vite

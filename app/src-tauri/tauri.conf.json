@@ -1,0 +1,31 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devPath": "http://localhost:5173",
+    "distDir": "../dist"
+  },
+  "package": {
+    "productName": "RustScan Desktop",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": true
+    },
+    "windows": [
+      {
+        "title": "RustScan Desktop",
+        "width": 1100,
+        "height": 720,
+        "decorations": false,
+        "fullscreen": false,
+        "resizable": true
+      }
+    ],
+    "bundle": {
+      "identifier": "com.rustscan.desktop",
+      "active": true
+    }
+  }
+}
