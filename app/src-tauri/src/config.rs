@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Map, Value};
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 use tokio::sync::Mutex;
 
 pub const TOOLBOX_THEME_ENV_NAME: &str = "ZHIGONG_TOOLBOX_THEME";
@@ -19,9 +19,9 @@ impl Default for FileWriteLock {
 
 pub fn ensure_config_dir(app: &tauri::AppHandle) -> Result<()> {
     let path = app
-        .path()
+        .path_resolver()
         .app_config_dir()
-        .map_err(|err| anyhow!("无法定位配置目录: {err}"))?;
+        .ok_or_else(|| anyhow!("无法定位配置目录"))?;
     fs::create_dir_all(&path).with_context(|| format!("无法创建配置目录: {}", path.display()))?;
     Ok(())
 }
@@ -29,9 +29,9 @@ pub fn ensure_config_dir(app: &tauri::AppHandle) -> Result<()> {
 fn config_path(app: &tauri::AppHandle) -> Result<PathBuf> {
     ensure_config_dir(app)?;
     let dir = app
-        .path()
+        .path_resolver()
         .app_config_dir()
-        .map_err(|err| anyhow!("无法定位配置目录: {err}"))?;
+        .ok_or_else(|| anyhow!("无法定位配置目录"))?;
     Ok(dir.join(CONFIG_FILE_NAME))
 }
 
@@ -118,7 +118,7 @@ pub fn save_config(
 }
 
 pub fn emit_theme_update(app: &tauri::AppHandle) {
-    let _ = app.emit("theme-changed", HashMap::<String, String>::new());
+    let _ = app.emit_all("theme-changed", HashMap::<String, String>::new());
 }
 
 #[tauri::command]

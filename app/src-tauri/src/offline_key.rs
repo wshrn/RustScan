@@ -14,7 +14,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::Mutex;
 
-use crate::config::{FileWriteLock, OFFLINE_KEY_ENV_NAME};
+use crate::config::OFFLINE_KEY_ENV_NAME;
 use crate::device;
 
 const OFFLINE_RSA_PRIVATE_KEY: &str = r"-----BEGIN PRIVATE KEY-----
