@@ -12,7 +12,6 @@ use std::process;
 pub fn run() {
     tauri::Builder::default()
         .manage(FileWriteLock::default())
-        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             offline_key::validate_offline_key,
             offline_key::get_device_id,
