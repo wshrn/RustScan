@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@tauri-apps/api/tauri'
 import { isTauri } from '../utils/runtime'
 
 type ThemeMode = 'light' | 'dark' | 'auto'
